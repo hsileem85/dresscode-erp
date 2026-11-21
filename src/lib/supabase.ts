@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { DEFAULT_LOOKUPS } from '../data/defaultLookups';
 import type {
   CurrencyCode,
   Customer,
@@ -6,6 +7,8 @@ import type {
   ExpenseRecord,
   Fabric,
   InventoryMovement,
+  LookupGroupKey,
+  LookupItem,
   ModelVariant,
   OutsourcedOperation,
   OverheadItem,
@@ -69,6 +72,7 @@ export async function fetchFullERPState(): Promise<{
     suppliersRes,
     workshopsRes,
     customersRes,
+    lookupsRes,
     fabricsRes,
     trimsRes,
     opsRes,
@@ -92,6 +96,7 @@ export async function fetchFullERPState(): Promise<{
     client.from('suppliers').select('*').order('created_at', { ascending: false }),
     client.from('workshops').select('*').order('created_at', { ascending: false }),
     client.from('customers').select('*').order('created_at', { ascending: false }),
+    client.from('lookup_values').select('*').order('sort_order'),
     client.from('fabrics').select('*').order('created_at', { ascending: false }),
     client.from('trims').select('*').order('created_at', { ascending: false }),
     client.from('outsourced_operations').select('*').order('created_at', { ascending: false }),
@@ -149,18 +154,34 @@ export async function fetchFullERPState(): Promise<{
   const suppliers: Supplier[] = (suppliersRes.data || []).map((r) => ({
     id: r.id,
     name: r.name,
+    contactName: r.contact_name || '',
     phone: r.phone || '',
+    address: r.address || '',
     specialty: r.specialty || '',
     balancePayable: Number(r.balance_payable) || 0,
+    notes: r.notes || '',
   }));
 
   const workshops: Workshop[] = (workshopsRes.data || []).map((r) => ({
     id: r.id,
     name: r.name,
+    contactName: r.contact_name || '',
     phone: r.phone || '',
+    address: r.address || '',
     specialty: r.specialty || '',
     balancePayable: Number(r.balance_payable) || 0,
+    notes: r.notes || '',
   }));
+
+  const lookups: LookupItem[] =
+    !lookupsRes.error && Array.isArray(lookupsRes.data) && lookupsRes.data.length > 0
+      ? lookupsRes.data.map((l) => ({
+          id: l.id,
+          groupKey: l.group_key as LookupGroupKey,
+          label: l.label,
+          sortOrder: Number(l.sort_order) || 0,
+        }))
+      : DEFAULT_LOOKUPS;
 
   const customers: Customer[] = (customersRes.data || []).map((r) => ({
     id: r.id,
@@ -415,6 +436,7 @@ export async function fetchFullERPState(): Promise<{
       suppliers,
       workshops,
       customers,
+      lookups,
       fabrics,
       trims,
       operations,
@@ -441,6 +463,59 @@ export const erpDb = {
       payload.estimated_monthly_volume = patch.estimatedMonthlyVolume;
     }
     const { error } = await db().from('app_settings').upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
+  },
+
+  async upsertSupplier(s: Supplier) {
+    const { error } = await db().from('suppliers').upsert({
+      id: s.id,
+      name: s.name,
+      contact_name: s.contactName || null,
+      phone: s.phone || null,
+      address: s.address || null,
+      specialty: s.specialty || null,
+      balance_payable: s.balancePayable ?? 0,
+      notes: s.notes || null,
+    });
+    if (error) throw error;
+  },
+
+  async deleteSupplier(id: string) {
+    const { error } = await db().from('suppliers').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  async upsertWorkshop(w: Workshop) {
+    const { error } = await db().from('workshops').upsert({
+      id: w.id,
+      name: w.name,
+      contact_name: w.contactName || null,
+      phone: w.phone || null,
+      address: w.address || null,
+      specialty: w.specialty || null,
+      balance_payable: w.balancePayable ?? 0,
+      notes: w.notes || null,
+    });
+    if (error) throw error;
+  },
+
+  async deleteWorkshop(id: string) {
+    const { error } = await db().from('workshops').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  async upsertLookup(l: LookupItem) {
+    const { error } = await db().from('lookup_values').upsert({
+      id: l.id,
+      group_key: l.groupKey,
+      label: l.label,
+      sort_order: l.sortOrder,
+    });
+    if (error) throw error;
+  },
+
+  async deleteLookup(id: string) {
+    const { error } = await db().from('lookup_values').delete().eq('id', id);
     if (error) throw error;
   },
 

@@ -8,6 +8,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
 import type {
   Fabric,
@@ -51,16 +52,6 @@ const EMPTY_TRIM: Omit<TrimAccessory, 'id'> = {
   reorderLevel: 50,
   notes: '',
 };
-
-const TRIM_CATEGORIES = [
-  'تيكت وهوية البراند',
-  'التغليف والهوية',
-  'سحابات',
-  'أزرار',
-  'خيوط',
-  'إكسسوارات',
-  'أخرى',
-];
 
 export const MaterialsView: React.FC = () => {
   const { state, saveFabric, deleteFabric, saveTrim, deleteTrim } = useERP();
@@ -448,15 +439,25 @@ export const MaterialsView: React.FC = () => {
               <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
                 المورد
               </label>
-              <input
-                type="text"
-                value={fabricForm.supplier}
-                onChange={(e) =>
-                  setFabricForm({ ...fabricForm, supplier: e.target.value })
-                }
-                placeholder="مثال: شركة النور للأقمشة"
-                className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
-              />
+              <select
+                value={fabricForm.supplierId || ''}
+                onChange={(e) => {
+                  const sup = state.suppliers.find((s) => s.id === e.target.value);
+                  setFabricForm({
+                    ...fabricForm,
+                    supplierId: sup ? sup.id : null,
+                    supplier: sup ? sup.name : fabricForm.supplier || 'مورد عام',
+                  });
+                }}
+                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="">-- اختر المورد من البيانات الأساسية --</option>
+                {state.suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -606,7 +607,7 @@ export const MaterialsView: React.FC = () => {
                 onChange={(e) => setTrimForm({ ...trimForm, category: e.target.value })}
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:border-[#A67C52]"
               >
-                {TRIM_CATEGORIES.map((cat) => (
+                {getLookupLabels(state.lookups, 'trim_categories').map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -618,13 +619,25 @@ export const MaterialsView: React.FC = () => {
               <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
                 المورد
               </label>
-              <input
-                type="text"
-                value={trimForm.supplier}
-                onChange={(e) => setTrimForm({ ...trimForm, supplier: e.target.value })}
-                placeholder="اسم المورد أو المطبعة"
-                className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
-              />
+              <select
+                value={trimForm.supplierId || ''}
+                onChange={(e) => {
+                  const sup = state.suppliers.find((s) => s.id === e.target.value);
+                  setTrimForm({
+                    ...trimForm,
+                    supplierId: sup ? sup.id : null,
+                    supplier: sup ? sup.name : trimForm.supplier || 'مورد عام',
+                  });
+                }}
+                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="">-- اختر المورد من البيانات الأساسية --</option>
+                {state.suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>

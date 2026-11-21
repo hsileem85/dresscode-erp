@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { Banknote, CheckCircle2, Plus, Receipt, Trash2, TrendingUp } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { getLookupLabels } from '../../data/defaultLookups';
 import type { SalesChannel, SalesOrder } from '../../types/erp';
 import { formatMoney, formatNumber } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
-const PLATFORMS = ['واتساب', 'انستجرام', 'المتجر', 'مباشر'];
 const FULFILLMENT_STATES = ['قيد التجهيز', 'واصل', 'مكتمل', 'مرتجع'];
 
 export const SalesView: React.FC = () => {
@@ -369,7 +369,7 @@ export const SalesView: React.FC = () => {
                 onChange={(e) => setPlatform(e.target.value)}
                 className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs"
               >
-                {PLATFORMS.map((p) => (
+                {getLookupLabels(state.lookups, 'platforms').map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>
@@ -575,9 +575,11 @@ export const SalesView: React.FC = () => {
                 onChange={(e) => setPaymentMethod(e.target.value)}
                 className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
               >
-                <option value="تحويل">تحويل</option>
-                <option value="كاش">كاش</option>
-                <option value="إنستاباي">إنستاباي</option>
+                {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
               </select>
             </div>
           </div>

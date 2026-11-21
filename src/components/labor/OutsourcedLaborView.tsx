@@ -297,18 +297,44 @@ export const OutsourcedLaborView: React.FC = () => {
               />
             </div>
 
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
-                اسم الورشة / المصنع / العامل *
-              </label>
-              <input
-                type="text"
-                required
-                value={form.workshopName}
-                onChange={(e) => setForm({ ...form, workshopName: e.target.value })}
-                placeholder="مثال: مصنع الأناقة للتشغيل"
-                className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
-              />
+            <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
+                  اختر الورشة من البيانات الأساسية
+                </label>
+                <select
+                  value={form.workshopId || ''}
+                  onChange={(e) => {
+                    const ws = state.workshops.find((w) => w.id === e.target.value);
+                    setForm({
+                      ...form,
+                      workshopId: ws ? ws.id : null,
+                      workshopName: ws ? ws.name : form.workshopName,
+                    });
+                  }}
+                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
+                >
+                  <option value="">-- اختر ورشة / مصنع --</option>
+                  {state.workshops.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
+                  اسم الورشة / المصنع / العامل *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={form.workshopName}
+                  onChange={(e) => setForm({ ...form, workshopName: e.target.value })}
+                  placeholder="مثال: مصنع الأناقة للتشغيل"
+                  className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
+                />
+              </div>
             </div>
 
             <div>

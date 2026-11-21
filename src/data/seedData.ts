@@ -1,7 +1,9 @@
 import type { ERPState } from '../types/erp';
+import { DEFAULT_LOOKUPS } from './defaultLookups';
 
 export const SEED_DATA: ERPState = {
   currency: 'EGP',
+  lookups: DEFAULT_LOOKUPS,
   customers: [
     {
       id: 'c0000001-1111-4111-a111-111111111101',

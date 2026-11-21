@@ -11,6 +11,7 @@ import {
   LogOut,
   Receipt,
   Scissors,
+  Settings2,
   ShoppingBag,
   Users,
   Wallet,
@@ -37,6 +38,12 @@ const NAV_ITEMS: {
     label: 'لوحة التحكم والأرباح (P&L)',
     sublabel: 'الملخص الشهري ونقطة التعادل',
     icon: LayoutDashboard,
+  },
+  {
+    id: 'basicdata',
+    label: 'البيانات الأساسية والتكويد',
+    sublabel: 'الموردين والورش والقوائم المنسدلة',
+    icon: Settings2,
   },
   {
     id: 'materials',

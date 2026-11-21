@@ -1,14 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { Crown, Edit3, MapPin, Plus, Search, Trash2, Users } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
 import type { Customer } from '../../types/erp';
 import { formatMoney } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
 type Tier = 'مميز' | 'VIP' | 'عادي' | 'جديد';
-
-const PLATFORMS = ['واتساب', 'انستجرام', 'المتجر', 'مباشر'];
 
 const EMPTY_CUSTOMER: Omit<Customer, 'id'> = {
   name: '',
@@ -355,7 +354,7 @@ export const CustomersView: React.FC = () => {
                 onChange={(e) => setForm({ ...form, platform: e.target.value })}
                 className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
               >
-                {PLATFORMS.map((p) => (
+                {getLookupLabels(state.lookups, 'platforms').map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>
@@ -366,11 +365,17 @@ export const CustomersView: React.FC = () => {
               <label className="block text-xs font-semibold mb-1">المحافظة / المدينة</label>
               <input
                 type="text"
+                list="dresscode-governorates-list"
                 value={form.governorate}
                 onChange={(e) => setForm({ ...form, governorate: e.target.value })}
                 placeholder="مثال: العريش / القاهرة / السويس"
                 className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm"
               />
+              <datalist id="dresscode-governorates-list">
+                {getLookupLabels(state.lookups, 'governorates').map((g) => (
+                  <option key={g} value={g} />
+                ))}
+              </datalist>
             </div>
             <div>
               <label className="block text-xs font-semibold mb-1">ملاحظات</label>

@@ -9,7 +9,25 @@ export type NavTab =
   | 'sales'
   | 'customers'
   | 'expenses'
+  | 'basicdata'
   | 'excel';
+
+export type LookupGroupKey =
+  | 'model_categories'
+  | 'trim_categories'
+  | 'platforms'
+  | 'governorates'
+  | 'expense_categories'
+  | 'payment_methods'
+  | 'sizes'
+  | 'colors';
+
+export interface LookupItem {
+  id: string;
+  groupKey: LookupGroupKey;
+  label: string;
+  sortOrder: number;
+}
 
 export type CurrencyCode = 'EGP' | 'SAR' | 'AED' | 'USD';
 
@@ -29,17 +47,23 @@ export const CURRENCIES: Record<CurrencyCode, CurrencyConfig> = {
 export interface Supplier {
   id: string;
   name: string;
+  contactName?: string;
   phone?: string;
+  address?: string;
   specialty?: string;
   balancePayable: number;
+  notes?: string;
 }
 
 export interface Workshop {
   id: string;
   name: string;
+  contactName?: string;
   phone?: string;
+  address?: string;
   specialty?: string;
   balancePayable: number;
+  notes?: string;
 }
 
 export interface Customer {
@@ -316,6 +340,7 @@ export interface ERPState {
   suppliers: Supplier[];
   workshops: Workshop[];
   customers: Customer[];
+  lookups: LookupItem[];
   fabrics: Fabric[];
   trims: TrimAccessory[];
   operations: OutsourcedOperation[];

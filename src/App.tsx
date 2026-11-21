@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, Database, X } from 'lucide-react';
 import { LoginScreen } from './components/auth/LoginScreen';
+import { BasicDataView } from './components/basicdata/BasicDataView';
 import { CostCalculatorView } from './components/calculator/CostCalculatorView';
 import { CustomersView } from './components/customers/CustomersView';
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -83,6 +84,7 @@ const ERPShell: React.FC = () => {
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
           {activeTab === 'dashboard' && <DashboardView />}
+          {activeTab === 'basicdata' && <BasicDataView />}
           {activeTab === 'materials' && <MaterialsView />}
           {activeTab === 'models' && <ModelsBOMView />}
           {activeTab === 'labor' && <OutsourcedLaborView />}

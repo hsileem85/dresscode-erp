@@ -1,12 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Banknote, Landmark, Plus, Trash2, Wallet } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
 import { formatMoney } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
-
-const EXPENSE_CATEGORIES = ['ثابت', 'متغير', 'تسويق', 'خامات'];
-const PAYMENT_METHODS = ['كاش', 'تحويل', 'إنستاباي'];
 
 export const ExpensesCashboxView: React.FC = () => {
   const {
@@ -274,7 +272,7 @@ export const ExpensesCashboxView: React.FC = () => {
               className="rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-1.5 text-xs"
             >
               <option value="all">كل الفئات</option>
-              {EXPENSE_CATEGORIES.map((c) => (
+              {getLookupLabels(state.lookups, 'expense_categories').map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -403,7 +401,7 @@ export const ExpensesCashboxView: React.FC = () => {
                 }}
                 className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
               >
-                {EXPENSE_CATEGORIES.map((c) => (
+                {getLookupLabels(state.lookups, 'expense_categories').map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -417,7 +415,7 @@ export const ExpensesCashboxView: React.FC = () => {
                 onChange={(e) => setExpMethod(e.target.value)}
                 className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
               >
-                {PAYMENT_METHODS.map((m) => (
+                {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>

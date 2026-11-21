@@ -11,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
 import type {
   ModelFabricItem,
@@ -29,17 +30,6 @@ import {
   getTrimLineCost,
   getTrimUnitCost,
 } from '../../utils/calculations';
-
-const MODEL_CATEGORIES = [
-  'عباية',
-  'فستان',
-  'كارديجان',
-  'طقم',
-  'بلوزة',
-  'كيمونو',
-  'بنطال واسع',
-  'أخرى',
-];
 
 const STATUS_LABELS: Record<ModelStatus, string> = {
   active: 'إنتاج نشط',
@@ -395,7 +385,7 @@ export const ModelsBOMView: React.FC = () => {
                     onChange={(e) => setDraft({ ...draft, category: e.target.value })}
                     className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#A67C52]"
                   >
-                    {MODEL_CATEGORIES.map((cat) => (
+                    {getLookupLabels(state.lookups, 'model_categories').map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
                       </option>

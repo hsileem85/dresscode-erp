@@ -9,12 +9,15 @@ import {
   newUuid,
   supabase,
 } from '../lib/supabase';
+import { DEFAULT_LOOKUPS } from '../data/defaultLookups';
 import type {
   CurrencyCode,
   Customer,
   ERPState,
   ExpenseRecord,
   Fabric,
+  LookupGroupKey,
+  LookupItem,
   ModelVariant,
   NavTab,
   OutsourcedOperation,
@@ -22,7 +25,9 @@ import type {
   PartnerContribution,
   ProductModel,
   SalesChannel,
+  Supplier,
   TrimAccessory,
+  Workshop,
 } from '../types/erp';
 
 const STORAGE_KEY = 'dresscode_erp_state_v3';
@@ -51,6 +56,14 @@ interface ERPContextValue {
 
   // Core settings
   setCurrency: (currency: CurrencyCode) => void;
+
+  // Basic Data & Lookups (الموردين، الورش، القوائم المنسدلة)
+  saveSupplier: (supplier: Supplier) => void;
+  deleteSupplier: (id: string) => void;
+  saveWorkshop: (workshop: Workshop) => void;
+  deleteWorkshop: (id: string) => void;
+  addLookupItem: (groupKey: LookupGroupKey, label: string) => void;
+  deleteLookupItem: (id: string) => void;
 
   // Customers CRM
   saveCustomer: (customer: Customer) => void;
@@ -156,6 +169,10 @@ function loadLocalState(): ERPState {
       suppliers: Array.isArray(parsed.suppliers) ? parsed.suppliers : SEED_DATA.suppliers,
       workshops: Array.isArray(parsed.workshops) ? parsed.workshops : SEED_DATA.workshops,
       customers: Array.isArray(parsed.customers) ? parsed.customers : SEED_DATA.customers,
+      lookups:
+        Array.isArray(parsed.lookups) && parsed.lookups.length > 0
+          ? parsed.lookups
+          : DEFAULT_LOOKUPS,
       fabrics: parsed.fabrics.map((f) => ({
         ...f,
         stockQty: f.stockQty ?? 0,
@@ -335,6 +352,81 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openModelInBOM = (modelId: string) => {
     setSelectedModelId(modelId);
     setActiveTab('models');
+  };
+
+  // Basic Data & Lookups (الموردين، الورش، القوائم المنسدلة)
+  const saveSupplier = (supplier: Supplier) => {
+    setState((prev) => {
+      const exists = prev.suppliers.some((s) => s.id === supplier.id);
+      return {
+        ...prev,
+        suppliers: exists
+          ? prev.suppliers.map((s) => (s.id === supplier.id ? supplier : s))
+          : [supplier, ...prev.suppliers],
+      };
+    });
+    void runCloud(() => erpDb.upsertSupplier(supplier));
+  };
+
+  const deleteSupplier = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      suppliers: prev.suppliers.filter((s) => s.id !== id),
+    }));
+    void runCloud(() => erpDb.deleteSupplier(id));
+  };
+
+  const saveWorkshop = (workshop: Workshop) => {
+    setState((prev) => {
+      const exists = prev.workshops.some((w) => w.id === workshop.id);
+      return {
+        ...prev,
+        workshops: exists
+          ? prev.workshops.map((w) => (w.id === workshop.id ? workshop : w))
+          : [workshop, ...prev.workshops],
+      };
+    });
+    void runCloud(() => erpDb.upsertWorkshop(workshop));
+  };
+
+  const deleteWorkshop = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      workshops: prev.workshops.filter((w) => w.id !== id),
+    }));
+    void runCloud(() => erpDb.deleteWorkshop(id));
+  };
+
+  const addLookupItem = (groupKey: LookupGroupKey, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const exists = state.lookups.some(
+      (l) => l.groupKey === groupKey && l.label.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (exists) return;
+    const item: LookupItem = {
+      id: newUuid(),
+      groupKey,
+      label: trimmed,
+      sortOrder: state.lookups.filter((l) => l.groupKey === groupKey).length + 1,
+    };
+    setState((prev) => ({ ...prev, lookups: [...prev.lookups, item] }));
+    // Persist silently to lookup_values if migration 004 has been applied
+    if (cloudConnected) {
+      void erpDb.upsertLookup(item).catch(() => {
+        // Table not created yet; stays persisted in LocalStorage until Migration 004 is run
+      });
+    }
+  };
+
+  const deleteLookupItem = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      lookups: prev.lookups.filter((l) => l.id !== id),
+    }));
+    if (cloudConnected) {
+      void erpDb.deleteLookup(id).catch(() => {});
+    }
   };
 
   // Customers CRM
@@ -904,6 +996,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         refreshFromCloud,
         signOut,
         setCurrency,
+        saveSupplier,
+        deleteSupplier,
+        saveWorkshop,
+        deleteWorkshop,
+        addLookupItem,
+        deleteLookupItem,
         saveCustomer,
         deleteCustomer,
         saveExpense,
