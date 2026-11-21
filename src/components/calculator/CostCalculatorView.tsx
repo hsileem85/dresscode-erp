@@ -14,6 +14,7 @@ import {
   Tooltip,
 } from 'recharts';
 import { useERP } from '../../context/ERPContext';
+import { newUuid } from '../../lib/supabase';
 import type { OverheadItem } from '../../types/erp';
 import {
   calculateModelCost,
@@ -90,7 +91,7 @@ export const CostCalculatorView: React.FC = () => {
     e.preventDefault();
     if (!newOverheadName.trim()) return;
     saveOverheadItem({
-      id: `oh-${Date.now()}`,
+      id: newUuid(),
       name: newOverheadName.trim(),
       category: newOverheadCategory,
       monthlyAmount: Number(newOverheadAmount) || 0,

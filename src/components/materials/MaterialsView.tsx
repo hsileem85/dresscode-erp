@@ -8,6 +8,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { newUuid } from '../../lib/supabase';
 import type {
   Fabric,
   FabricUnit,
@@ -32,6 +33,8 @@ const EMPTY_FABRIC: Omit<Fabric, 'id'> = {
   pricePerUnit: 0,
   widthCm: 150,
   defaultWastePct: 6,
+  stockQty: 0,
+  reorderLevel: 20,
   colorOrCode: '',
   notes: '',
 };
@@ -44,6 +47,8 @@ const EMPTY_TRIM: Omit<TrimAccessory, 'id'> = {
   packPrice: 0,
   unitsPerPack: 12,
   unitLabel: 'قطعة',
+  stockQty: 0,
+  reorderLevel: 50,
   notes: '',
 };
 
@@ -104,11 +109,14 @@ export const MaterialsView: React.FC = () => {
     setEditingFabricId(fabric.id);
     setFabricForm({
       name: fabric.name,
+      supplierId: fabric.supplierId,
       supplier: fabric.supplier,
       unit: fabric.unit,
       pricePerUnit: fabric.pricePerUnit,
       widthCm: fabric.widthCm,
       defaultWastePct: fabric.defaultWastePct,
+      stockQty: fabric.stockQty ?? 0,
+      reorderLevel: fabric.reorderLevel ?? 20,
       colorOrCode: fabric.colorOrCode || '',
       notes: fabric.notes || '',
     });
@@ -119,7 +127,7 @@ export const MaterialsView: React.FC = () => {
     e.preventDefault();
     if (!fabricForm.name.trim()) return;
     saveFabric({
-      id: editingFabricId || `fab-${Date.now()}`,
+      id: editingFabricId || newUuid(),
       ...fabricForm,
       pricePerUnit: Number(fabricForm.pricePerUnit) || 0,
       widthCm: Number(fabricForm.widthCm) || 150,
@@ -139,11 +147,14 @@ export const MaterialsView: React.FC = () => {
     setTrimForm({
       name: trim.name,
       category: trim.category,
+      supplierId: trim.supplierId,
       supplier: trim.supplier,
       purchaseUnit: trim.purchaseUnit,
       packPrice: trim.packPrice,
       unitsPerPack: trim.unitsPerPack,
       unitLabel: trim.unitLabel,
+      stockQty: trim.stockQty ?? 0,
+      reorderLevel: trim.reorderLevel ?? 50,
       notes: trim.notes || '',
     });
     setTrimModalOpen(true);
@@ -163,7 +174,7 @@ export const MaterialsView: React.FC = () => {
     e.preventDefault();
     if (!trimForm.name.trim()) return;
     saveTrim({
-      id: editingTrimId || `trm-${Date.now()}`,
+      id: editingTrimId || newUuid(),
       ...trimForm,
       packPrice: Number(trimForm.packPrice) || 0,
       unitsPerPack: Math.max(1, Number(trimForm.unitsPerPack) || 1),

@@ -11,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { newUuid } from '../../lib/supabase';
 import type {
   ModelFabricItem,
   ModelLaborItem,
@@ -48,7 +49,7 @@ const STATUS_LABELS: Record<ModelStatus, string> = {
 
 function createBlankModel(existingCount: number): ProductModel {
   return {
-    id: `mod-${Date.now()}`,
+    id: newUuid(),
     name: 'موديل جديد',
     sku: `DC-NEW-${String(existingCount + 1).padStart(3, '0')}`,
     category: 'عباية',
@@ -58,6 +59,7 @@ function createBlankModel(existingCount: number): ProductModel {
     fabrics: [],
     trims: [],
     laborSteps: [],
+    variants: [],
     notes: '',
     updatedAt: new Date().toISOString().slice(0, 10),
   };
@@ -105,7 +107,7 @@ export const ModelsBOMView: React.FC = () => {
     const defaultFab = state.fabrics[0];
     if (!defaultFab) return;
     const item: ModelFabricItem = {
-      id: `mf-${Date.now()}`,
+      id: newUuid(),
       fabricId: defaultFab.id,
       consumption: 2.5,
       wastePct: defaultFab.defaultWastePct,
@@ -143,7 +145,7 @@ export const ModelsBOMView: React.FC = () => {
     const defaultTrim = state.trims[0];
     if (!defaultTrim) return;
     const item: ModelTrimItem = {
-      id: `mt-${Date.now()}`,
+      id: newUuid(),
       trimId: defaultTrim.id,
       quantity: 1,
     };
@@ -169,8 +171,9 @@ export const ModelsBOMView: React.FC = () => {
     const op = state.operations.find((o) => o.id === opId);
     const step: ModelLaborItem = op
       ? {
-          id: `ml-${Date.now()}`,
+          id: newUuid(),
           operationId: op.id,
+          workshopId: op.workshopId,
           name: op.name,
           workshopName: op.workshopName,
           billingType: op.billingType,
@@ -178,7 +181,7 @@ export const ModelsBOMView: React.FC = () => {
           batchSize: op.batchSize,
         }
       : {
-          id: `ml-${Date.now()}`,
+          id: newUuid(),
           name: 'مرحلة تشغيل جديدة',
           workshopName: 'ورشة خارجية',
           billingType: 'per_piece',

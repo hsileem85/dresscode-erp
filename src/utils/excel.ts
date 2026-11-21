@@ -246,8 +246,15 @@ function parseNum(val: unknown, fallback = 0): number {
   return isNaN(num) ? fallback : num;
 }
 
-function makeId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+function makeId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 export function mapRowsToFabrics(
@@ -262,13 +269,15 @@ export function mapRowsToFabrics(
       const unit: Fabric['unit'] =
         rawUnit.includes('كيلو') || rawUnit.includes('kg') ? 'kg' : 'meter';
       return {
-        id: makeId('fab'),
+        id: makeId(),
         name,
         supplier: String(row[mapping.supplier] ?? 'مورد عام').trim() || 'مورد عام',
         unit,
         pricePerUnit: parseNum(row[mapping.pricePerUnit], 0),
         widthCm: parseNum(row[mapping.widthCm], 150),
         defaultWastePct: parseNum(row[mapping.defaultWastePct], 6),
+        stockQty: 0,
+        reorderLevel: 20,
         notes: String(row[mapping.notes] ?? '').trim(),
       };
     })
@@ -296,7 +305,7 @@ export function mapRowsToTrims(
       const unitsPerPack = Math.max(1, parseNum(row[mapping.unitsPerPack], defaultUnits));
 
       return {
-        id: makeId('trm'),
+        id: makeId(),
         name,
         category: String(row[mapping.category] ?? 'إكسسوارات').trim() || 'إكسسوارات',
         supplier: String(row[mapping.supplier] ?? 'مورد عام').trim() || 'مورد عام',
@@ -304,6 +313,8 @@ export function mapRowsToTrims(
         packPrice: parseNum(row[mapping.packPrice], 0),
         unitsPerPack,
         unitLabel: String(row[mapping.unitLabel] ?? 'قطعة').trim() || 'قطعة',
+        stockQty: 0,
+        reorderLevel: 50,
       };
     })
     .filter((item): item is TrimAccessory => item !== null);
@@ -323,7 +334,7 @@ export function mapRowsToOperations(
           ? 'per_batch'
           : 'per_piece';
       return {
-        id: makeId('op'),
+        id: makeId(),
         name,
         workshopName:
           String(row[mapping.workshopName] ?? 'ورشة خارجية').trim() || 'ورشة خارجية',
@@ -346,7 +357,7 @@ export function mapRowsToModels(
       if (!name) return null;
       const laborCost = parseNum(row[mapping.directLaborCost], 0);
       return {
-        id: makeId('mod'),
+        id: makeId(),
         name,
         sku:
           String(row[mapping.sku] ?? '').trim() ||
@@ -357,11 +368,12 @@ export function mapRowsToModels(
         targetMarginPct: parseNum(row[mapping.targetMarginPct], 65),
         fabrics: [],
         trims: [],
+        variants: [],
         laborSteps:
           laborCost > 0
             ? [
                 {
-                  id: makeId('ml'),
+                  id: makeId(),
                   name: 'إجمالي التشغيل الخارجي (مستورد)',
                   workshopName: 'ورشة التشغيل',
                   billingType: 'per_piece',

@@ -9,6 +9,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { newUuid } from '../../lib/supabase';
 import type { LaborBillingType, OutsourcedOperation } from '../../types/erp';
 import { formatMoney, getLaborStepUnitCost } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
@@ -65,6 +66,7 @@ export const OutsourcedLaborView: React.FC = () => {
     setEditingId(op.id);
     setForm({
       name: op.name,
+      workshopId: op.workshopId,
       workshopName: op.workshopName,
       billingType: op.billingType,
       cost: op.cost,
@@ -79,7 +81,7 @@ export const OutsourcedLaborView: React.FC = () => {
     e.preventDefault();
     if (!form.name.trim()) return;
     saveOperation({
-      id: editingId || `op-${Date.now()}`,
+      id: editingId || newUuid(),
       ...form,
       cost: Number(form.cost) || 0,
       batchSize:

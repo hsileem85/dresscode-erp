@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { AlertCircle, X } from 'lucide-react';
+import { LoginScreen } from './components/auth/LoginScreen';
 import { CostCalculatorView } from './components/calculator/CostCalculatorView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { ExcelImportExportView } from './components/excel/ExcelImportExportView';
@@ -7,11 +9,35 @@ import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { MaterialsView } from './components/materials/MaterialsView';
 import { ModelsBOMView } from './components/models/ModelsBOMView';
+import { ProductionView } from './components/production/ProductionView';
+import { PurchasesView } from './components/purchases/PurchasesView';
+import { SalesView } from './components/sales/SalesView';
 import { ERPProvider, useERP } from './context/ERPContext';
+import { isSupabaseConfigured } from './lib/supabase';
 
 const ERPShell: React.FC = () => {
-  const { activeTab } = useERP();
+  const {
+    activeTab,
+    user,
+    authChecked,
+    offlineMode,
+    setOfflineMode,
+    syncError,
+    clearSyncError,
+  } = useERP();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  if (isSupabaseConfigured && !authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F7F6F3] text-sm text-[#6E6C66]">
+        جاري التحقق من جلسة DressCode ERP...
+      </div>
+    );
+  }
+
+  if (isSupabaseConfigured && !user && !offlineMode) {
+    return <LoginScreen onContinueOffline={() => setOfflineMode(true)} />;
+  }
 
   return (
     <div className="min-h-screen flex bg-[#F7F6F3] text-[#1A1A1E]">
@@ -23,12 +49,31 @@ const ERPShell: React.FC = () => {
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar onOpenMobile={() => setMobileMenuOpen(true)} />
 
+        {syncError && (
+          <div className="mx-4 sm:mx-6 lg:mx-8 mt-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-center justify-between gap-3 text-xs font-semibold text-red-800">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{syncError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={clearSyncError}
+              className="p-1 hover:bg-red-100 rounded-lg cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
           {activeTab === 'dashboard' && <DashboardView />}
           {activeTab === 'materials' && <MaterialsView />}
           {activeTab === 'models' && <ModelsBOMView />}
           {activeTab === 'labor' && <OutsourcedLaborView />}
           {activeTab === 'calculator' && <CostCalculatorView />}
+          {activeTab === 'purchases' && <PurchasesView />}
+          {activeTab === 'production' && <ProductionView />}
+          {activeTab === 'sales' && <SalesView />}
           {activeTab === 'excel' && <ExcelImportExportView />}
         </main>
       </div>

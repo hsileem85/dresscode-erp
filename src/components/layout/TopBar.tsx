@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Download, Menu } from 'lucide-react';
+import { CheckCircle2, Database, Download, Menu, RefreshCw } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import type { NavTab } from '../../types/erp';
 import { exportFullERPToExcel } from '../../utils/excel';
@@ -29,6 +29,18 @@ const PAGE_META: Record<NavTab, { title: string; subtitle: string }> = {
     title: 'حاسبة التكلفة والتسعير والمصاريف غير المباشرة',
     subtitle: 'توزيع المصاريف الشهرية على حجم الإنتاج ومحاكاة سعر البيع وهامش الربح',
   },
+  purchases: {
+    title: 'المشتريات ومخزن الخامات',
+    subtitle: 'إصدار واستلام أوامر شراء الأقمشة والكلف وتحديث متوسط التكلفة المرجّح تلقائياً',
+  },
+  production: {
+    title: 'أوامر التصنيع ومخزون المنتج التام',
+    subtitle: 'صرف الخامات للتشغيلات وإتمام الإنتاج واستلام القطع حسب اللون والمقاس',
+  },
+  sales: {
+    title: 'المبيعات والأرباح وسجل حركة المخزون',
+    subtitle: 'تسجيل فواتير المتجر والجملة وخصم المخزون وحساب مجمل الربح الفعلي',
+  },
   excel: {
     title: 'الاستيراد الذكي والتصدير (Excel & JSON)',
     subtitle: 'ارفع شيت الإكسل الحالي واربط الأعمدة بسهولة أو صدّر تقارير DressCode الكاملة',
@@ -36,7 +48,8 @@ const PAGE_META: Record<NavTab, { title: string; subtitle: string }> = {
 };
 
 export const TopBar: React.FC<TopBarProps> = ({ onOpenMobile }) => {
-  const { activeTab, state, lastSavedAt } = useERP();
+  const { activeTab, state, lastSavedAt, cloudConnected, syncing, refreshFromCloud } =
+    useERP();
   const meta = PAGE_META[activeTab];
 
   return (
@@ -62,13 +75,29 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobile }) => {
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
-          <div
-            className="hidden md:flex items-center gap-1.5 text-xs text-[#6E6C66] bg-[#FAF9F7] border border-[#E5E3DD] rounded-lg px-3 py-1.5"
-            title="يتم حفظ التعديلات تلقائياً في المتصفح"
-          >
-            <CheckCircle2 className="w-3.5 h-3.5 text-[#A67C52]" />
-            <span>حفظ تلقائي • {lastSavedAt}</span>
-          </div>
+          {cloudConnected ? (
+            <button
+              type="button"
+              onClick={() => void refreshFromCloud()}
+              className="hidden md:inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-emerald-100"
+              title="مزامنة فورية مع PostgreSQL"
+            >
+              {syncing ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-700" />
+              ) : (
+                <Database className="w-3.5 h-3.5 text-emerald-700" />
+              )}
+              <span>{syncing ? 'جاري المزامنة...' : `PostgreSQL • ${lastSavedAt}`}</span>
+            </button>
+          ) : (
+            <div
+              className="hidden md:flex items-center gap-1.5 text-xs text-[#6E6C66] bg-[#FAF9F7] border border-[#E5E3DD] rounded-lg px-3 py-1.5"
+              title="يتم حفظ التعديلات محلياً في المتصفح"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#A67C52]" />
+              <span>حفظ محلي • {lastSavedAt}</span>
+            </div>
+          )}
 
           <button
             id="quick-export-excel"
