@@ -112,45 +112,45 @@ export const SalesView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
-          <div className="text-xs font-semibold text-[#6E6C66]">إجمالي المبيعات</div>
-          <div className="text-xl font-bold text-[#1A1A1E] tabular-nums mt-1.5">
+      <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 sm:gap-4">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-4">
+          <div className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">إجمالي المبيعات</div>
+          <div className="text-lg sm:text-xl font-bold text-[#1A1A1E] tabular-nums mt-1.5">
             {formatMoney(netRevenue, state.currency)}
           </div>
           <div className="text-[11px] text-[#6E6C66] mt-0.5">
             {confirmedOrders.length} طلب
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
-          <div className="text-xs font-semibold text-[#6E6C66]">المبالغ المحصّلة</div>
-          <div className="text-xl font-bold text-emerald-700 tabular-nums mt-1.5">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-4">
+          <div className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">المبالغ المحصّلة</div>
+          <div className="text-lg sm:text-xl font-bold text-emerald-700 tabular-nums mt-1.5">
             {formatMoney(totalCollected, state.currency)}
           </div>
           <div className="text-[11px] text-[#6E6C66] mt-0.5">
-            ديون متبقية:{' '}
+            ديون:{' '}
             <span className={totalDebts > 0 ? 'text-red-600 font-bold' : ''}>
               {formatMoney(totalDebts, state.currency)}
             </span>
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
-          <div className="text-xs font-semibold text-[#6E6C66]">تكلفة البضاعة (COGS)</div>
-          <div className="text-xl font-bold text-[#1A1A1E] tabular-nums mt-1.5">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-4">
+          <div className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">تكلفة البضاعة</div>
+          <div className="text-lg sm:text-xl font-bold text-[#1A1A1E] tabular-nums mt-1.5">
             {formatMoney(totalCogs, state.currency)}
           </div>
-          <div className="text-[11px] text-[#6E6C66] mt-0.5">بالتكلفة الفعلية للقطع</div>
+          <div className="text-[11px] text-[#6E6C66] mt-0.5">بالتكلفة الفعلية</div>
         </div>
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
-          <div className="text-xs font-semibold text-[#6E6C66]">مجمل الربح</div>
-          <div className="text-xl font-bold text-[#8E6742] tabular-nums mt-1.5">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-4">
+          <div className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">مجمل الربح</div>
+          <div className="text-lg sm:text-xl font-bold text-[#8E6742] tabular-nums mt-1.5">
             {formatMoney(grossProfit, state.currency)}
           </div>
           <div className="text-[11px] text-[#6E6C66] mt-0.5">
-            هامش ربح: {formatNumber(grossMarginPct, 1)}%
+            هامش: {formatNumber(grossMarginPct, 1)}%
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 flex flex-col justify-center">
+        <div className="col-span-2 xl:col-span-1 bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-4 flex flex-col justify-center">
           <button
             type="button"
             onClick={openModal}
@@ -162,17 +162,126 @@ export const SalesView: React.FC = () => {
         </div>
       </div>
 
-      {/* Orders Table */}
+      {/* Orders List / Table */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#E5E3DD] flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Receipt className="w-4 h-4 text-[#A67C52]" />
-            <h2 className="text-sm font-bold text-[#1A1A1E]">
+            <Receipt className="w-4 h-4 text-[#A67C52] shrink-0" />
+            <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
               سجل الطلبات والمدفوعات وحالة التسليم
             </h2>
           </div>
         </div>
-        <div className="overflow-x-auto">
+
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {state.salesOrders.map((so) => (
+            <div key={so.id} className="p-4 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono font-bold text-xs text-[#1A1A1E]">
+                      {so.orderNumber}
+                    </span>
+                    <span className="text-[11px] text-[#6E6C66] tabular-nums">{so.orderDate}</span>
+                  </div>
+                  <div className="font-bold text-sm text-[#1A1A1E] mt-0.5 truncate">
+                    {so.customerName}
+                  </div>
+                  <div className="text-[11px] text-[#6E6C66] truncate">
+                    {so.platform} {so.notes ? `• ${so.notes}` : ''}
+                  </div>
+                </div>
+                <span
+                  className={`inline-flex shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                    so.paymentStatus === 'مدفوع بالكامل'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : so.paymentStatus === 'دفع جزئي'
+                      ? 'bg-amber-50 text-amber-800'
+                      : 'bg-red-50 text-red-700'
+                  }`}
+                >
+                  {so.paymentStatus}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
+                <div>
+                  <div className="text-[10px] text-[#6E6C66]">الإجمالي</div>
+                  <div className="font-bold tabular-nums mt-0.5">
+                    {formatMoney(so.totalAmount, state.currency)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-[#6E6C66]">المدفوع</div>
+                  <div className="font-semibold text-emerald-700 tabular-nums mt-0.5">
+                    {formatMoney(so.paidAmount, state.currency)}
+                  </div>
+                  {so.remainingDebt > 0 && (
+                    <div className="text-[10px] text-red-600 font-bold tabular-nums">
+                      متبقي: {formatMoney(so.remainingDebt, state.currency)}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="text-[10px] text-[#6E6C66]">الربح</div>
+                  <div className="font-bold text-[#8E6742] tabular-nums mt-0.5">
+                    {formatMoney(so.grossProfit, state.currency)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <select
+                  value={so.fulfillmentStatus}
+                  onChange={(e) => void updateSalesFulfillment(so.id, e.target.value)}
+                  aria-label="حالة التسليم"
+                  className="rounded-xl border border-[#E5E3DD] bg-white px-3 py-1.5 text-xs font-semibold"
+                >
+                  {FULFILLMENT_STATES.map((st) => (
+                    <option key={st} value={st}>
+                      {st}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="flex items-center gap-2">
+                  {so.status === 'draft' && (
+                    <button
+                      type="button"
+                      onClick={() => void confirmSalesOrder(so.id)}
+                      className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-xl cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
+                      تأكيد
+                    </button>
+                  )}
+                  {so.remainingDebt > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentOrder(so);
+                        setPaymentValue(so.remainingDebt);
+                      }}
+                      className="inline-flex items-center gap-1 text-xs font-bold bg-[#F6EFE7] text-[#8E6742] hover:bg-[#EDE0D1] px-3 py-1.5 rounded-xl cursor-pointer"
+                    >
+                      <Banknote className="w-3.5 h-3.5" />
+                      تحصيل دفعة
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+          {state.salesOrders.length === 0 && (
+            <div className="py-8 text-center text-xs text-[#6E6C66]">
+              لا توجد طلبات بيع مسجلة بعد.
+            </div>
+          )}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs sm:text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>
@@ -278,13 +387,46 @@ export const SalesView: React.FC = () => {
       {/* Audit Ledger */}
       {state.inventoryMovements.length > 0 && (
         <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#E5E3DD] flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-[#A67C52]" />
-            <h2 className="text-sm font-bold text-[#1A1A1E]">
+          <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-[#A67C52] shrink-0" />
+            <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
               سجل حركة المخزون الموحّد (Audit Ledger — PostgreSQL)
             </h2>
           </div>
-          <div className="overflow-x-auto">
+
+          {/* Mobile Cards */}
+          <div className="md:hidden divide-y divide-[#F0EFEA]">
+            {state.inventoryMovements.slice(0, 15).map((mv) => (
+              <div key={mv.id} className="p-3.5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-[#1A1A1E]">{mv.itemType}</span>
+                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#F3F2EE] text-[#6E6C66]">
+                      {mv.movementType}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[#6E6C66] truncate mt-0.5">
+                    {mv.notes || mv.referenceType}
+                  </div>
+                </div>
+                <div className="text-left shrink-0">
+                  <div
+                    className={`text-xs font-extrabold tabular-nums ${
+                      mv.qtyDelta >= 0 ? 'text-emerald-700' : 'text-red-600'
+                    }`}
+                  >
+                    {mv.qtyDelta > 0 ? `+${mv.qtyDelta}` : mv.qtyDelta}
+                  </div>
+                  <div className="text-[10px] text-[#6E6C66] tabular-nums">
+                    {formatMoney(mv.unitCost, state.currency)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop Table */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs text-right">
               <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
                 <tr>

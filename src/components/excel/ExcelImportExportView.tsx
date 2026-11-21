@@ -277,9 +277,9 @@ export const ExcelImportExportView: React.FC = () => {
       </div>
 
       {/* Smart Drag & Drop Excel Importer */}
-      <div className="bg-white rounded-2xl border border-[#E5E3DD] p-6 space-y-5">
+      <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-6 space-y-5">
         <div>
-          <h2 className="text-base font-bold text-[#1A1A1E]">
+          <h2 className="text-sm sm:text-base font-bold text-[#1A1A1E]">
             الاستيراد الذكي من شيت الإكسل (.xlsx / .csv)
           </h2>
           <p className="text-xs text-[#6E6C66] mt-0.5">
@@ -296,17 +296,17 @@ export const ExcelImportExportView: React.FC = () => {
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
-          className={`rounded-2xl border-2 border-dashed p-10 text-center transition-all cursor-pointer ${
+          className={`rounded-2xl border-2 border-dashed p-6 sm:p-10 text-center transition-all cursor-pointer ${
             dragging
               ? 'border-[#A67C52] bg-[#FBF8F4]'
               : 'border-[#D1CEC6] bg-[#FAF9F7] hover:border-[#A67C52]'
           }`}
         >
-          <UploadCloud className="w-10 h-10 text-[#A67C52] mx-auto mb-3" />
-          <p className="text-sm font-bold text-[#1A1A1E]">
+          <UploadCloud className="w-9 h-9 sm:w-10 sm:h-10 text-[#A67C52] mx-auto mb-2.5 sm:mb-3" />
+          <p className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
             اسحب وأفلت ملف الإكسل (.xlsx / .csv) هنا، أو اضغط للاختيار من جهازك
           </p>
-          <p className="text-xs text-[#6E6C66] mt-1">
+          <p className="text-[11px] sm:text-xs text-[#6E6C66] mt-1">
             يدعم الأوراق المتعددة والتعرف التلقائي على الأعمدة العربية والإنجليزية
           </p>
           <input
@@ -325,7 +325,7 @@ export const ExcelImportExportView: React.FC = () => {
         {/* Column Mapping & Preview Table */}
         {parsed && currentSheet && (
           <div className="space-y-5 pt-2 border-t border-[#F0EFEA]">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-[#FAF9F7] p-4 rounded-xl border border-[#E5E3DD]">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 bg-[#FAF9F7] p-3.5 sm:p-4 rounded-xl border border-[#E5E3DD]">
               <div>
                 <div className="text-[11px] text-[#6E6C66] mb-1">الملف المرفوع</div>
                 <div className="text-sm font-bold text-[#1A1A1E] truncate">
@@ -340,7 +340,7 @@ export const ExcelImportExportView: React.FC = () => {
                 <select
                   value={selectedSheet}
                   onChange={(e) => handleSheetChange(e.target.value)}
-                  className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+                  className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-2 sm:py-1.5 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
                 >
                   {parsed.sheetNames.map((s) => (
                     <option key={s} value={s}>
@@ -359,7 +359,7 @@ export const ExcelImportExportView: React.FC = () => {
                   onChange={(e) =>
                     handleTargetChange(e.target.value as ImportTargetType)
                   }
-                  className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+                  className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-2 sm:py-1.5 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
                 >
                   {Object.entries(TARGET_LABELS).map(([k, label]) => (
                     <option key={k} value={k}>
@@ -393,7 +393,7 @@ export const ExcelImportExportView: React.FC = () => {
                           [field.key]: e.target.value,
                         }))
                       }
-                      className="w-full rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
+                      className="w-full rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 sm:py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
                     >
                       <option value="">-- تجاهل هذا الحقل --</option>
                       {currentSheet.headers.map((header) => (
@@ -443,11 +443,11 @@ export const ExcelImportExportView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3">
               <button
                 type="button"
                 onClick={() => setParsed(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+                className="w-full sm:w-auto px-4 py-2.5 sm:py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
               >
                 إلغاء
               </button>
@@ -455,9 +455,9 @@ export const ExcelImportExportView: React.FC = () => {
                 id="btn-confirm-excel-import"
                 type="button"
                 onClick={handleCommitImport}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold transition-colors cursor-pointer"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                <CheckCircle2 className="w-4 h-4" />
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>
                   تأكيد واستيراد {currentSheet.rows.length} صف إلى {TARGET_LABELS[targetType]}
                 </span>

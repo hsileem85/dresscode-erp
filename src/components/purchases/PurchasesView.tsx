@@ -200,15 +200,64 @@ export const PurchasesView: React.FC = () => {
         </div>
       </div>
 
-      {/* Purchase Orders Table */}
+      {/* Purchase Orders List (Mobile Cards + Desktop Table) */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#E5E3DD] flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShoppingBag className="w-4 h-4 text-[#A67C52]" />
             <h2 className="text-sm font-bold text-[#1A1A1E]">سجل أوامر الشراء والفواتير</h2>
           </div>
         </div>
-        <div className="overflow-x-auto">
+
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {state.purchaseOrders.map((po) => (
+            <div key={po.id} className="p-3.5 space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-[#1A1A1E]">{po.supplierName}</div>
+                  <div className="text-[11px] text-[#6E6C66]">
+                    <span className="font-mono">{po.poNumber}</span> • {po.orderDate}
+                  </div>
+                </div>
+                <span
+                  className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
+                    po.status === 'received'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-[#F6EFE7] text-[#8E6742]'
+                  }`}
+                >
+                  {po.status === 'received' ? 'مستلم' : 'قيد التوريد'}
+                </span>
+              </div>
+              <div className="text-xs text-[#4B4A46] bg-[#FAF9F7] rounded-xl p-2.5">
+                {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-extrabold text-[#1A1A1E] tabular-nums">
+                  {formatMoney(po.totalAmount, state.currency)}
+                </span>
+                {po.status !== 'received' && (
+                  <button
+                    type="button"
+                    onClick={() => void receivePO(po.id)}
+                    className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
+                    استلام بالمخزن
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {state.purchaseOrders.length === 0 && (
+            <div className="p-8 text-center text-xs text-[#6E6C66]">
+              لا توجد أوامر شراء مسجلة بعد.
+            </div>
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>

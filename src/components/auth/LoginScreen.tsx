@@ -69,9 +69,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onContinueOffline }) =
   };
 
   return (
-    <div className="min-h-screen bg-[#F7F6F3] flex items-center justify-center p-4">
+    <div className="min-h-[100dvh] bg-[#F7F6F3] flex items-center justify-center p-3.5 sm:p-4">
       <div className="w-full max-w-md bg-white rounded-3xl border border-[#E5E3DD] shadow-xl overflow-hidden">
-        <div className="bg-[#1A1A1E] text-white px-8 py-7 text-center">
+        <div className="bg-[#1A1A1E] text-white px-5 sm:px-8 py-6 sm:py-7 text-center">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-[#BD956D] to-[#8E6742] flex items-center justify-center shadow-md mb-3.5">
             <span
               className="text-white text-2xl font-semibold tracking-wider"
@@ -91,7 +91,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onContinueOffline }) =
           </p>
         </div>
 
-        <div className="p-7 space-y-5">
+        <div className="p-5 sm:p-7 space-y-4 sm:space-y-5">
           {/* Sign In / Sign Up Switch */}
           <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-[#F3F2EE] p-1">
             <button

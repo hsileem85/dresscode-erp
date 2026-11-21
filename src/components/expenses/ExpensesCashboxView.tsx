@@ -109,49 +109,49 @@ export const ExpensesCashboxView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Live Cashbox Banner */}
-      <div className="bg-[#1A1A1E] text-white rounded-2xl p-6 shadow-md">
-        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-white/10">
+      <div className="bg-[#1A1A1E] text-white rounded-2xl p-4 sm:p-6 shadow-md">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
           <div className="flex items-center gap-3">
-            <span className="w-11 h-11 rounded-xl bg-[#A67C52] flex items-center justify-center">
+            <span className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-[#A67C52] flex items-center justify-center shrink-0">
               <Wallet className="w-5 h-5 text-white" />
             </span>
             <div>
-              <h2 className="text-base font-bold">الخزنة والسيولة المتاحة (المتاح)</h2>
-              <p className="text-xs text-[#B4B2AA]">
+              <h2 className="text-sm sm:text-base font-bold">الخزنة والسيولة المتاحة (المتاح)</h2>
+              <p className="text-[11px] sm:text-xs text-[#B4B2AA]">
                 رأس مال الشركاء + تحصيلات العملاء − كافة المصروفات النقدية والتحويلات
               </p>
             </div>
           </div>
-          <div className="text-left">
-            <div className="text-xs text-[#D4B896]">الرصيد المتاح حالياً</div>
+          <div className="sm:text-left bg-white/5 sm:bg-transparent rounded-xl px-3.5 py-2.5 sm:p-0">
+            <div className="text-[11px] sm:text-xs text-[#D4B896]">الرصيد المتاح حالياً</div>
             <div className="text-2xl sm:text-3xl font-extrabold tabular-nums text-[#BD956D]">
               {formatMoney(availableCash, state.currency)}
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 pt-4 text-xs">
           <div>
-            <div className="text-[#B4B2AA]">رأس مال الشركاء</div>
-            <div className="text-base font-bold tabular-nums mt-0.5">
+            <div className="text-[11px] text-[#B4B2AA]">رأس مال الشركاء</div>
+            <div className="text-sm sm:text-base font-bold tabular-nums mt-0.5">
               +{formatMoney(totalPartnerCapital, state.currency)}
             </div>
           </div>
           <div>
-            <div className="text-[#B4B2AA]">تحصيلات المبيعات</div>
-            <div className="text-base font-bold text-emerald-400 tabular-nums mt-0.5">
+            <div className="text-[11px] text-[#B4B2AA]">تحصيلات المبيعات</div>
+            <div className="text-sm sm:text-base font-bold text-emerald-400 tabular-nums mt-0.5">
               +{formatMoney(totalCollections, state.currency)}
             </div>
           </div>
           <div>
-            <div className="text-[#B4B2AA]">مصروفات تشغيلية وتسويق</div>
-            <div className="text-base font-bold text-amber-300 tabular-nums mt-0.5">
+            <div className="text-[11px] text-[#B4B2AA]">مصروفات تشغيلية</div>
+            <div className="text-sm sm:text-base font-bold text-amber-300 tabular-nums mt-0.5">
               -{formatMoney(operatingExpensesOnly, state.currency)}
             </div>
           </div>
           <div>
-            <div className="text-[#B4B2AA]">مشتريات خامات وتشغيل (خارج المصروف التشغيلي)</div>
-            <div className="text-base font-bold text-[#D6D4CE] tabular-nums mt-0.5">
+            <div className="text-[11px] text-[#B4B2AA]">مشتريات خامات وتشغيل</div>
+            <div className="text-sm sm:text-base font-bold text-[#D6D4CE] tabular-nums mt-0.5">
               -{formatMoney(rawMaterialOutflow, state.currency)}
             </div>
           </div>
@@ -159,18 +159,18 @@ export const ExpensesCashboxView: React.FC = () => {
       </div>
 
       {/* Partner Capital Section */}
-      <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-4">
+      <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Landmark className="w-4 h-4 text-[#A67C52]" />
-            <h2 className="text-sm font-bold text-[#1A1A1E]">
+            <Landmark className="w-4 h-4 text-[#A67C52] shrink-0" />
+            <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
               رأس مال الشركاء والمساهمات ({formatMoney(totalPartnerCapital, state.currency)})
             </h2>
           </div>
           <button
             type="button"
             onClick={() => setPartnerModalOpen(true)}
-            className="inline-flex items-center gap-1.5 text-xs font-bold bg-[#F6EFE7] hover:bg-[#EDE0D1] text-[#8E6742] px-3 py-1.5 rounded-xl cursor-pointer"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#F6EFE7] hover:bg-[#EDE0D1] text-[#8E6742] px-3 py-2 sm:py-1.5 rounded-xl cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>تسجيل مساهمة / سحب شريك</span>
@@ -181,7 +181,7 @@ export const ExpensesCashboxView: React.FC = () => {
           {partnerTotals.map(([name, total]) => (
             <div
               key={name}
-              className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-4 flex items-center justify-between"
+              className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3.5 sm:p-4 flex items-center justify-between"
             >
               <div>
                 <div className="text-sm font-bold text-[#1A1A1E]">{name}</div>
@@ -201,49 +201,86 @@ export const ExpensesCashboxView: React.FC = () => {
         </div>
 
         {state.partnerContributions.length > 0 && (
-          <div className="overflow-x-auto pt-2">
-            <table className="w-full text-xs text-right">
-              <thead className="text-[#6E6C66] border-b border-[#E5E3DD]">
-                <tr>
-                  <th className="py-2 px-3">الشريك</th>
-                  <th className="py-2 px-3">التاريخ</th>
-                  <th className="py-2 px-3">المبلغ</th>
-                  <th className="py-2 px-3">ملاحظات</th>
-                  <th className="py-2 px-3">حذف</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#F0EFEA]">
-                {state.partnerContributions.map((p) => (
-                  <tr key={p.id}>
-                    <td className="py-2 px-3 font-bold">{p.partnerName}</td>
-                    <td className="py-2 px-3 text-[#6E6C66] tabular-nums">{p.contributionDate}</td>
-                    <td className="py-2 px-3 font-bold tabular-nums">
+          <>
+            {/* Mobile Partner Contributions Cards */}
+            <div className="md:hidden divide-y divide-[#F0EFEA] border-t border-[#F0EFEA] pt-1">
+              {state.partnerContributions.map((p) => (
+                <div key={p.id} className="py-2.5 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-[#1A1A1E]">{p.partnerName}</span>
+                      <span className="text-[11px] text-[#6E6C66] tabular-nums">
+                        {p.contributionDate}
+                      </span>
+                    </div>
+                    {p.notes && (
+                      <div className="text-[11px] text-[#6E6C66] truncate mt-0.5">{p.notes}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs font-bold tabular-nums text-[#8E6742]">
                       {formatMoney(p.amount, state.currency)}
-                    </td>
-                    <td className="py-2 px-3 text-[#6E6C66]">{p.notes || '—'}</td>
-                    <td className="py-2 px-3">
-                      <button
-                        type="button"
-                        onClick={() => deletePartnerContribution(p.id)}
-                        className="text-[#9C9990] hover:text-red-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deletePartnerContribution(p.id)}
+                      aria-label="حذف"
+                      className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Partner Contributions Table */}
+            <div className="hidden md:block overflow-x-auto pt-2">
+              <table className="w-full text-xs text-right">
+                <thead className="text-[#6E6C66] border-b border-[#E5E3DD]">
+                  <tr>
+                    <th className="py-2 px-3">الشريك</th>
+                    <th className="py-2 px-3">التاريخ</th>
+                    <th className="py-2 px-3">المبلغ</th>
+                    <th className="py-2 px-3">ملاحظات</th>
+                    <th className="py-2 px-3">حذف</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-[#F0EFEA]">
+                  {state.partnerContributions.map((p) => (
+                    <tr key={p.id}>
+                      <td className="py-2 px-3 font-bold">{p.partnerName}</td>
+                      <td className="py-2 px-3 text-[#6E6C66] tabular-nums">
+                        {p.contributionDate}
+                      </td>
+                      <td className="py-2 px-3 font-bold tabular-nums">
+                        {formatMoney(p.amount, state.currency)}
+                      </td>
+                      <td className="py-2 px-3 text-[#6E6C66]">{p.notes || '—'}</td>
+                      <td className="py-2 px-3">
+                        <button
+                          type="button"
+                          onClick={() => deletePartnerContribution(p.id)}
+                          className="text-[#9C9990] hover:text-red-600 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 
       {/* Expenses Ledger */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="p-4 border-b border-[#E5E3DD] flex flex-wrap items-center justify-between gap-3">
+        <div className="p-4 border-b border-[#E5E3DD] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Banknote className="w-4 h-4 text-[#A67C52]" />
-            <h2 className="text-sm font-bold text-[#1A1A1E]">
+            <Banknote className="w-4 h-4 text-[#A67C52] shrink-0" />
+            <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
               سجل المصروفات ({filteredExpenses.length} حركة • الإجمالي{' '}
               {formatMoney(
                 filteredExpenses.reduce((s, e) => s + e.amount, 0),
@@ -253,11 +290,11 @@ export const ExpensesCashboxView: React.FC = () => {
             </h2>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
             <select
               value={monthFilter}
               onChange={(e) => setMonthFilter(e.target.value)}
-              className="rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-1.5 text-xs"
+              className="rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 sm:py-1.5 text-xs"
             >
               <option value="all">كل الشهور</option>
               {availableMonths.map((m) => (
@@ -269,7 +306,7 @@ export const ExpensesCashboxView: React.FC = () => {
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-1.5 text-xs"
+              className="rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 sm:py-1.5 text-xs"
             >
               <option value="all">كل الفئات</option>
               {getLookupLabels(state.lookups, 'expense_categories').map((c) => (
@@ -281,7 +318,7 @@ export const ExpensesCashboxView: React.FC = () => {
             <button
               type="button"
               onClick={() => setExpModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold px-3.5 py-2 cursor-pointer"
+              className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold px-3.5 py-2 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>تسجيل مصروف جديد</span>
@@ -289,7 +326,57 @@ export const ExpensesCashboxView: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile Expenses Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {filteredExpenses.map((e) => (
+            <div key={e.id} className="p-4 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-[#1A1A1E]">{e.title}</div>
+                  <div className="text-[11px] text-[#6E6C66] flex items-center flex-wrap gap-1.5 mt-0.5">
+                    <span className="tabular-nums">{e.expenseDate}</span>
+                    <span>•</span>
+                    <span className="px-2 py-0.5 rounded-full bg-[#F3F2EE] text-[#1A1A1E] font-semibold">
+                      {e.category}
+                    </span>
+                    <span>•</span>
+                    <span>{e.paymentMethod}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-sm font-extrabold tabular-nums text-[#1A1A1E]">
+                    {formatMoney(e.amount, state.currency)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => deleteExpense(e.id)}
+                    aria-label="حذف"
+                    className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <div className="text-[11px]">
+                {e.isRawMaterialPurchase ? (
+                  <span className="text-[#8E6742] font-semibold">
+                    خامات / تصنيع (لا يُكرر في P&L)
+                  </span>
+                ) : (
+                  <span className="text-[#6E6C66]">مصروف تشغيلي (يُخصم في P&L)</span>
+                )}
+              </div>
+            </div>
+          ))}
+          {filteredExpenses.length === 0 && (
+            <div className="py-10 text-center text-xs text-[#6E6C66]">
+              لا توجد مصروفات مطابقة للتصفية.
+            </div>
+          )}
+        </div>
+
+        {/* Desktop Expenses Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>

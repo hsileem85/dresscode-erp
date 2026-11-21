@@ -28,17 +28,24 @@
   html {
     font-family: var(--font-sans);
     direction: rtl;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
     background-color: #F7F6F3;
     color: #1A1A1E;
+    overflow-x: hidden;
   }
 
   /* Tabular numerals for clean cost alignment */
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
+}
+
+.safe-area-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
 }
 
 /* Refined minimalist scrollbar */

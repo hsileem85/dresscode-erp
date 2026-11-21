@@ -65,19 +65,19 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobile }) => {
   const meta = PAGE_META[activeTab];
 
   return (
-    <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-[#E5E3DD] px-4 sm:px-6 lg:px-8 py-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
+    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[#E5E3DD] px-3.5 sm:px-6 lg:px-8 py-3 sm:py-4">
+      <div className="flex items-center justify-between gap-2.5 sm:gap-4">
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           <button
             type="button"
             onClick={onOpenMobile}
             aria-label="فتح القائمة"
-            className="lg:hidden p-2 rounded-xl border border-[#E5E3DD] text-[#1A1A1E] hover:bg-[#F3F2EE]"
+            className="lg:hidden p-2 rounded-xl border border-[#E5E3DD] text-[#1A1A1E] hover:bg-[#F3F2EE] shrink-0"
           >
             <Menu className="w-5 h-5" />
           </button>
           <div className="min-w-0">
-            <h1 className="text-lg sm:text-xl font-bold text-[#1A1A1E] truncate">
+            <h1 className="text-sm sm:text-xl font-bold text-[#1A1A1E] truncate">
               {meta.title}
             </h1>
             <p className="text-xs text-[#6E6C66] truncate mt-0.5 hidden sm:block">
@@ -86,12 +86,12 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobile }) => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {cloudConnected ? (
             <button
               type="button"
               onClick={() => void refreshFromCloud()}
-              className="hidden md:inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-emerald-100"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-emerald-100"
               title="مزامنة فورية مع PostgreSQL"
             >
               {syncing ? (
@@ -99,7 +99,9 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobile }) => {
               ) : (
                 <Database className="w-3.5 h-3.5 text-emerald-700" />
               )}
-              <span>{syncing ? 'جاري المزامنة...' : `PostgreSQL • ${lastSavedAt}`}</span>
+              <span className="hidden md:inline">
+                {syncing ? 'جاري المزامنة...' : `PostgreSQL • ${lastSavedAt}`}
+              </span>
             </button>
           ) : (
             <div
@@ -115,7 +117,8 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenMobile }) => {
             id="quick-export-excel"
             type="button"
             onClick={() => exportFullERPToExcel(state)}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs sm:text-sm font-medium px-3.5 py-2 transition-colors cursor-pointer"
+            aria-label="تصدير إكسل"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs sm:text-sm font-medium px-2.5 sm:px-3.5 py-2 transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4 text-[#BD956D]" />
             <span className="hidden sm:inline">تصدير إكسل</span>

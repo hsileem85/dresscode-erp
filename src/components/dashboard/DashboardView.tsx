@@ -260,7 +260,7 @@ export const DashboardView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Month Filter Bar */}
-      <div className="bg-white rounded-2xl border border-[#E5E3DD] px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div className="bg-white rounded-2xl border border-[#E5E3DD] px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold text-[#1A1A1E]">
             تقرير الأرباح والخسائر واللوحة التنفيذية (P&L)
@@ -269,12 +269,12 @@ export const DashboardView: React.FC = () => {
             حساب تلقائي للمبيعات، التحصيل، الديون، تكلفة البضاعة، المصروفات التشغيلية، ونقطة التعادل
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-semibold text-[#6E6C66]">الشهر المعروض:</label>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <label className="text-xs font-semibold text-[#6E6C66] shrink-0">الشهر:</label>
           <select
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
-            className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-1.5 text-xs font-bold text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
+            className="flex-1 sm:flex-none rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-bold text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
           >
             <option value="all">إجمالي السنة (كل الشهور)</option>
             {MONTHS_AR.map((m, i) => (
@@ -287,66 +287,66 @@ export const DashboardView: React.FC = () => {
       </div>
 
       {/* Executive P&L KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#6E6C66]">إجمالي المبيعات</span>
-            <span className="w-9 h-9 rounded-xl bg-[#F6EFE7] text-[#A67C52] flex items-center justify-center">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-5">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">إجمالي المبيعات</span>
+            <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#F6EFE7] text-[#A67C52] flex items-center justify-center shrink-0">
               <TrendingUp className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-bold text-[#1A1A1E] tabular-nums mt-3">
+          <div className="text-base sm:text-2xl font-bold text-[#1A1A1E] tabular-nums mt-2 sm:mt-3 break-words">
             {formatMoney(pnl.totalSales, state.currency)}
           </div>
-          <p className="text-xs text-[#6E6C66] mt-1">
-            {pnl.ordersCount} طلب • متوسط الطلب {formatMoney(pnl.avgOrderValue, state.currency)}
+          <p className="text-[11px] text-[#6E6C66] mt-1">
+            {pnl.ordersCount} طلب • متوسط {formatMoney(pnl.avgOrderValue, state.currency)}
           </p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#6E6C66]">مجمل الربح / صافي الربح</span>
-            <span className="w-9 h-9 rounded-xl bg-[#1A1A1E] text-[#BD956D] flex items-center justify-center">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-5">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">صافي الربح</span>
+            <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#1A1A1E] text-[#BD956D] flex items-center justify-center shrink-0">
               <Percent className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-bold text-emerald-700 tabular-nums mt-3">
+          <div className="text-base sm:text-2xl font-bold text-emerald-700 tabular-nums mt-2 sm:mt-3 break-words">
             {formatMoney(pnl.netProfit, state.currency)}
           </div>
-          <p className="text-xs text-[#6E6C66] mt-1">
-            مجمل الربح {formatMoney(pnl.grossProfit, state.currency)} ({formatNumber(pnl.grossMarginPct, 1)}%)
+          <p className="text-[11px] text-[#6E6C66] mt-1">
+            مجمل {formatMoney(pnl.grossProfit, state.currency)} ({formatNumber(pnl.grossMarginPct, 1)}%)
           </p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#6E6C66]">
-              المصروفات التشغيلية ونقطة التعادل
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-5">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">
+              المصروفات التشغيلية
             </span>
-            <span className="w-9 h-9 rounded-xl bg-[#F3F2EE] text-[#1A1A1E] flex items-center justify-center">
+            <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#F3F2EE] text-[#1A1A1E] flex items-center justify-center shrink-0">
               <Package className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-bold text-[#1A1A1E] tabular-nums mt-3">
+          <div className="text-base sm:text-2xl font-bold text-[#1A1A1E] tabular-nums mt-2 sm:mt-3 break-words">
             {formatMoney(pnl.totalOperatingExp, state.currency)}
           </div>
-          <p className="text-xs text-[#6E6C66] mt-1">
+          <p className="text-[11px] text-[#6E6C66] mt-1">
             نقطة التعادل: {formatMoney(pnl.breakEvenSales, state.currency)}
           </p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-[#6E6C66]">المتاح بالخزنة / الديون</span>
-            <span className="w-9 h-9 rounded-xl bg-[#F6EFE7] text-[#8E6742] flex items-center justify-center">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-5">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">المتاح بالخزنة</span>
+            <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#F6EFE7] text-[#8E6742] flex items-center justify-center shrink-0">
               <Wallet className="w-4 h-4" />
             </span>
           </div>
-          <div className="text-2xl font-bold text-[#8E6742] tabular-nums mt-3">
+          <div className="text-base sm:text-2xl font-bold text-[#8E6742] tabular-nums mt-2 sm:mt-3 break-words">
             {formatMoney(pnl.availableCash, state.currency)}
           </div>
-          <p className="text-xs text-[#6E6C66] mt-1">
-            ديون العملاء المستحقة:{' '}
+          <p className="text-[11px] text-[#6E6C66] mt-1">
+            ديون العملاء:{' '}
             <span className={pnl.totalDebts > 0 ? 'text-red-600 font-bold' : ''}>
               {formatMoney(pnl.totalDebts, state.currency)}
             </span>
@@ -354,14 +354,14 @@ export const DashboardView: React.FC = () => {
         </div>
       </div>
 
-      {/* 12-Month Detailed P&L Table */}
+      {/* 12-Month Detailed P&L Table (Cards on Mobile, Table on Desktop) */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#E5E3DD] flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-bold text-[#1A1A1E]">
-              الملخص الشهري التلقائي للأرباح والخسائر (يناير — ديسمبر)
+              الملخص الشهري التلقائي للأرباح والخسائر
             </h2>
-            <p className="text-xs text-[#6E6C66]">
+            <p className="text-[11px] sm:text-xs text-[#6E6C66]">
               المصروفات التشغيلية مفصولة عن مشتريات الخامات لتجنب ازدواج التكلفة
             </p>
           </div>
@@ -370,10 +370,48 @@ export const DashboardView: React.FC = () => {
             onClick={() => setActiveTab('expenses')}
             className="text-xs font-bold text-[#A67C52] hover:text-[#7B5836] cursor-pointer"
           >
-            إدارة المصروفات والخزنة ←
+            المصروفات والخزنة ←
           </button>
         </div>
-        <div className="overflow-x-auto">
+
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {monthlyRows
+            .filter((r) => r.sales > 0 || r.opEx > 0)
+            .map((r) => (
+              <div key={r.mm} className="p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-sm text-[#1A1A1E]">
+                    {r.label} <span className="text-xs font-normal text-[#6E6C66]">({r.ordersCount} طلب)</span>
+                  </span>
+                  <span
+                    className={`text-xs font-extrabold tabular-nums px-2 py-0.5 rounded-lg ${
+                      r.net >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                    }`}
+                  >
+                    صافي: {formatMoney(r.net, state.currency)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[11px] bg-[#FAF9F7] rounded-xl p-2.5">
+                  <div>
+                    <div className="text-[#6E6C66]">المبيعات</div>
+                    <div className="font-bold tabular-nums">{formatMoney(r.sales, state.currency)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[#6E6C66]">التكلفة</div>
+                    <div className="font-semibold tabular-nums">{formatMoney(r.cogs, state.currency)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[#6E6C66]">الهامش</div>
+                    <div className="font-bold text-[#8E6742] tabular-nums">{formatNumber(r.marginPct, 1)}%</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
               <tr>
@@ -631,7 +669,53 @@ export const DashboardView: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {modelSummaries.slice(0, 12).map(({ model, cost }) => (
+            <div key={model.id} className="p-3.5 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-[#1A1A1E]">{model.name}</div>
+                  <div className="text-[11px] text-[#6E6C66]">
+                    <span className="font-mono">{model.sku}</span> • {model.category}
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-lg bg-[#F6EFE7] text-[#8E6742] font-bold text-xs tabular-nums shrink-0">
+                  {formatMoney(
+                    model.actualRetailPrice && model.actualRetailPrice > 0
+                      ? model.actualRetailPrice
+                      : cost.suggestedRetailPrice,
+                    state.currency
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs pt-1">
+                <span className="text-[#6E6C66] tabular-nums">
+                  التكلفة: <b className="text-[#1A1A1E]">{formatMoney(cost.totalUnitCost, state.currency)}</b>
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => openModelInBOM(model.id)}
+                    className="text-xs border border-[#E5E3DD] px-2.5 py-1 rounded-lg cursor-pointer"
+                  >
+                    BOM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openModelInCalculator(model.id)}
+                    className="p-1.5 text-[#A67C52] bg-[#F6EFE7] rounded-lg cursor-pointer"
+                  >
+                    <Calculator className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>

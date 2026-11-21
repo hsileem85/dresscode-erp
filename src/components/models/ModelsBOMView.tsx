@@ -205,9 +205,37 @@ export const ModelsBOMView: React.FC = () => {
   }, [draft, state.fabrics, state.trims, state.overhead]);
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-      {/* Models Sidebar List */}
-      <div className="xl:col-span-4 bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+      {/* Mobile/Tablet Model Picker Bar */}
+      <div className="xl:hidden bg-white rounded-2xl border border-[#E5E3DD] p-3.5 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-bold text-[#1A1A1E]">
+            اختر الموديل ({state.models.length})
+          </span>
+          <button
+            type="button"
+            onClick={handleCreateNew}
+            className="inline-flex items-center gap-1 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold px-3 py-1.5 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>موديل جديد</span>
+          </button>
+        </div>
+        <select
+          value={draft?.id || ''}
+          onChange={(e) => setSelectedModelId(e.target.value)}
+          className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2.5 text-sm font-bold text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
+        >
+          {state.models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name} ({m.sku})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Desktop Models Sidebar List */}
+      <div className="hidden xl:block xl:col-span-4 bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
         <div className="p-4 border-b border-[#E5E3DD] flex items-center justify-between gap-2 bg-[#FAF9F7]">
           <div>
             <h2 className="text-sm font-bold text-[#1A1A1E]">
@@ -290,7 +318,7 @@ export const ModelsBOMView: React.FC = () => {
       </div>
 
       {/* Model BOM Editor */}
-      <div className="xl:col-span-8 space-y-5">
+      <div className="xl:col-span-8 min-w-0 space-y-5">
         {!draft ? (
           <div className="bg-white rounded-2xl border border-[#E5E3DD] p-12 text-center">
             <Scissors className="w-10 h-10 text-[#A67C52] mx-auto mb-3" />
@@ -745,7 +773,7 @@ export const ModelsBOMView: React.FC = () => {
                   </h3>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                   <select
                     defaultValue=""
                     onChange={(e) => {
@@ -754,7 +782,7 @@ export const ModelsBOMView: React.FC = () => {
                         e.target.value = '';
                       }
                     }}
-                    className="rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-1.5 text-xs text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
+                    className="w-full sm:w-auto max-w-full min-w-0 flex-1 sm:flex-initial rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 sm:py-1.5 text-xs text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
                   >
                     <option value="">+ إضافة من دليل الورش...</option>
                     {state.operations.map((op) => (
@@ -767,7 +795,7 @@ export const ModelsBOMView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => addLaborFromCatalog('')}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#8E6742] bg-[#F6EFE7] hover:bg-[#EDE0D1] px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1 text-xs font-semibold text-[#8E6742] bg-[#F6EFE7] hover:bg-[#EDE0D1] px-3 py-2 sm:py-1.5 rounded-lg transition-colors cursor-pointer shrink-0"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     مرحلة مخصصة
@@ -875,33 +903,33 @@ export const ModelsBOMView: React.FC = () => {
 
             {/* Live Cost Card Summary */}
             {liveCost && (
-              <div className="bg-[#1A1A1E] text-white rounded-2xl p-6 shadow-md">
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 items-center">
+              <div className="bg-[#1A1A1E] text-white rounded-2xl p-4 sm:p-6 shadow-md">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4 items-center">
                   <div>
-                    <div className="text-[11px] text-[#B4B2AA]">الخامات والكلف بالهالك</div>
-                    <div className="text-base font-bold tabular-nums mt-1">
+                    <div className="text-[11px] text-[#B4B2AA]">الخامات والكلف</div>
+                    <div className="text-sm sm:text-base font-bold tabular-nums mt-0.5">
                       {formatMoney(liveCost.directMaterialCost, state.currency)}
                     </div>
                   </div>
                   <div>
                     <div className="text-[11px] text-[#B4B2AA]">التشغيل الخارجي</div>
-                    <div className="text-base font-bold tabular-nums mt-1">
+                    <div className="text-sm sm:text-base font-bold tabular-nums mt-0.5">
                       {formatMoney(liveCost.directLaborCost, state.currency)}
                     </div>
                   </div>
                   <div>
-                    <div className="text-[11px] text-[#B4B2AA]">المصاريف غير المباشرة</div>
-                    <div className="text-base font-bold tabular-nums mt-1">
+                    <div className="text-[11px] text-[#B4B2AA]">غير المباشرة</div>
+                    <div className="text-sm sm:text-base font-bold tabular-nums mt-0.5">
                       {formatMoney(liveCost.indirectOverheadCost, state.currency)}
                     </div>
                   </div>
-                  <div className="border-r border-white/15 pr-4">
-                    <div className="text-[11px] text-[#D4B896]">التكلفة الإجمالية للقطعة</div>
-                    <div className="text-lg font-extrabold tabular-nums mt-1 text-white">
+                  <div className="sm:border-r sm:border-white/15 sm:pr-4">
+                    <div className="text-[11px] text-[#D4B896]">التكلفة الإجمالية</div>
+                    <div className="text-base sm:text-lg font-extrabold tabular-nums mt-0.5 text-white">
                       {formatMoney(liveCost.totalUnitCost, state.currency)}
                     </div>
                   </div>
-                  <div className="bg-[#A67C52] rounded-xl p-3 text-center">
+                  <div className="col-span-2 sm:col-span-1 bg-[#A67C52] rounded-xl p-3 text-center">
                     <div className="text-[11px] text-white/90">
                       سعر البيع المقترح (+{formatNumber(draft.targetMarginPct, 0)}%)
                     </div>

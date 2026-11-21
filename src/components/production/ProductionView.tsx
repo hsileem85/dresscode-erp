@@ -90,27 +90,31 @@ export const ProductionView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Actions & KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
-          <div className="text-xs font-semibold text-[#6E6C66]">مخزون المنتج التام الجاهز للبيع</div>
-          <div className="text-2xl font-bold text-[#1A1A1E] tabular-nums mt-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5">
+          <div className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">
+            مخزون المنتج التام
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-[#1A1A1E] tabular-nums mt-1.5 sm:mt-2">
             {totalFinishedPieces} قطعة
           </div>
-          <div className="text-xs text-[#6E6C66] mt-1">
-            موزّعة على {allVariants.length} مقاس ولون (SKU)
+          <div className="text-[11px] sm:text-xs text-[#6E6C66] mt-1">
+            موزّعة على {allVariants.length} مقاس ولون
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
-          <div className="text-xs font-semibold text-[#6E6C66]">تشغيلات التصنيع (Production)</div>
-          <div className="text-2xl font-bold text-[#8E6742] tabular-nums mt-2">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5">
+          <div className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">
+            تشغيلات التصنيع
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-[#8E6742] tabular-nums mt-1.5 sm:mt-2">
             {state.productionOrders.length} تشغيلة
           </div>
-          <div className="text-xs text-[#6E6C66] mt-1">
+          <div className="text-[11px] sm:text-xs text-[#6E6C66] mt-1">
             {state.productionOrders.filter((p) => p.status === 'in_progress').length} قيد
             التشغيل بالورش
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 flex flex-col justify-center gap-2">
+        <div className="col-span-2 sm:col-span-1 bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5 flex flex-col justify-center gap-2">
           <button
             type="button"
             onClick={() => {
@@ -136,15 +140,96 @@ export const ProductionView: React.FC = () => {
         </div>
       </div>
 
-      {/* Production Orders Table */}
+      {/* Production Orders */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#E5E3DD] flex items-center gap-2">
-          <Factory className="w-4 h-4 text-[#A67C52]" />
-          <h2 className="text-sm font-bold text-[#1A1A1E]">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex items-center gap-2">
+          <Factory className="w-4 h-4 text-[#A67C52] shrink-0" />
+          <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
             أوامر التصنيع والتشغيل (صرف الخامات ← استلام منتج تام)
           </h2>
         </div>
-        <div className="overflow-x-auto">
+
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {state.productionOrders.map((po) => {
+            const model = state.models.find((m) => m.id === po.modelId);
+            return (
+              <div key={po.id} className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-mono font-bold text-xs text-[#6E6C66]">
+                      {po.batchNumber}
+                    </div>
+                    <div className="font-bold text-sm text-[#1A1A1E] mt-0.5 truncate">
+                      {model?.name || 'موديل'}
+                    </div>
+                  </div>
+                  <span
+                    className={`inline-flex shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                      po.status === 'completed'
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : po.status === 'in_progress'
+                        ? 'bg-amber-50 text-amber-800'
+                        : 'bg-[#F3F2EE] text-[#4B4A46]'
+                    }`}
+                  >
+                    {po.status === 'completed'
+                      ? 'مكتملة'
+                      : po.status === 'in_progress'
+                      ? 'قيد التشغيل'
+                      : 'مخططة'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">الكمية</div>
+                    <div className="font-bold tabular-nums mt-0.5">{po.plannedQty} قطعة</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">تكلفة القطعة (COGS)</div>
+                    <div className="font-bold text-[#8E6742] tabular-nums mt-0.5">
+                      {po.actualUnitCogs > 0
+                        ? formatMoney(po.actualUnitCogs, state.currency)
+                        : 'عند الإتمام'}
+                    </div>
+                  </div>
+                </div>
+
+                {po.status === 'planned' && (
+                  <button
+                    type="button"
+                    disabled={busyId === po.id}
+                    onClick={() => void runAction(po.id, () => issueProductionBatch(po.id))}
+                    className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50"
+                  >
+                    <Play className="w-3.5 h-3.5 text-[#BD956D]" />
+                    صرف الخامات وبدء التشغيل
+                  </button>
+                )}
+                {po.status === 'in_progress' && (
+                  <button
+                    type="button"
+                    disabled={busyId === po.id}
+                    onClick={() => void runAction(po.id, () => completeProductionBatch(po.id))}
+                    className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#A67C52] text-white px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    إتمام واستلام المنتج التام
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {state.productionOrders.length === 0 && (
+            <div className="py-8 text-center text-xs text-[#6E6C66]">
+              لا توجد تشغيلات تصنيع مسجلة بعد.
+            </div>
+          )}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>
@@ -224,13 +309,55 @@ export const ProductionView: React.FC = () => {
 
       {/* Finished Goods Inventory Matrix */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#E5E3DD] flex items-center gap-2">
-          <Boxes className="w-4 h-4 text-[#A67C52]" />
-          <h2 className="text-sm font-bold text-[#1A1A1E]">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex items-center gap-2">
+          <Boxes className="w-4 h-4 text-[#A67C52] shrink-0" />
+          <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
             مخزون المنتج التام حسب اللون والمقاس (Finished Goods)
           </h2>
         </div>
-        <div className="overflow-x-auto">
+
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {allVariants.map((v) => (
+            <div key={v.id} className="p-4 space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-[#1A1A1E] truncate">{v.modelName}</div>
+                  <div className="text-[11px] text-[#6E6C66] mt-0.5">
+                    {v.color} — <span className="font-bold text-[#1A1A1E]">{v.size}</span>
+                    <span className="font-mono mr-1.5 text-[10px]">({v.variantSku})</span>
+                  </div>
+                </div>
+                <span
+                  className={`inline-flex shrink-0 px-2.5 py-0.5 rounded-lg text-xs font-extrabold tabular-nums ${
+                    v.finishedGoodsQty <= v.reorderLevel
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-[#F6EFE7] text-[#8E6742]'
+                  }`}
+                >
+                  {v.finishedGoodsQty} قطعة
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
+                <div>
+                  <div className="text-[10px] text-[#6E6C66]">متوسط التكلفة</div>
+                  <div className="font-semibold tabular-nums mt-0.5">
+                    {formatMoney(v.avgUnitCogs, state.currency)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-[#6E6C66]">سعر البيع</div>
+                  <div className="font-bold text-[#1A1A1E] tabular-nums mt-0.5">
+                    {formatMoney(v.retailPrice, state.currency)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>

@@ -107,12 +107,12 @@ export const CostCalculatorView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 sm:gap-6 items-start">
         {/* Right Column: Indirect Monthly Overhead Allocator */}
-        <div className="xl:col-span-5 bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-5">
+        <div className="xl:col-span-5 bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5 space-y-5">
           <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#F0EFEA]">
             <div className="flex items-center gap-2.5">
-              <span className="w-9 h-9 rounded-xl bg-[#F6EFE7] text-[#A67C52] flex items-center justify-center">
+              <span className="w-9 h-9 rounded-xl bg-[#F6EFE7] text-[#A67C52] flex items-center justify-center shrink-0">
                 <Building className="w-4 h-4" />
               </span>
               <div>
@@ -127,8 +127,8 @@ export const CostCalculatorView: React.FC = () => {
           </div>
 
           {/* Monthly Volume Control */}
-          <div className="rounded-xl bg-[#FAF9F7] border border-[#E5E3DD] p-4 space-y-2.5">
-            <div className="flex items-center justify-between">
+          <div className="rounded-xl bg-[#FAF9F7] border border-[#E5E3DD] p-3.5 sm:p-4 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <label
                 htmlFor="monthly-volume-input"
                 className="text-xs font-bold text-[#1A1A1E]"
@@ -141,7 +141,7 @@ export const CostCalculatorView: React.FC = () => {
                 min="1"
                 value={state.overhead.estimatedMonthlyVolume}
                 onChange={(e) => setMonthlyVolume(Number(e.target.value) || 1)}
-                className="w-28 rounded-lg border border-[#E5E3DD] bg-white px-3 py-1.5 text-sm font-bold text-center tabular-nums focus:outline-none focus:border-[#A67C52]"
+                className="w-24 sm:w-28 rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-sm font-bold text-center tabular-nums focus:outline-none focus:border-[#A67C52]"
               />
             </div>
 
@@ -166,7 +166,7 @@ export const CostCalculatorView: React.FC = () => {
             {state.overhead.items.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center justify-between gap-2.5 p-3 rounded-xl border border-[#EFECE6] hover:border-[#D8D4CC] transition-colors"
+                className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 p-3 rounded-xl border border-[#EFECE6] hover:border-[#D8D4CC] transition-colors"
               >
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold text-[#1A1A1E] truncate">
@@ -177,7 +177,7 @@ export const CostCalculatorView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <input
                     type="number"
                     min="0"
@@ -190,7 +190,7 @@ export const CostCalculatorView: React.FC = () => {
                       })
                     }
                     aria-label={`مبلغ ${item.name}`}
-                    className="w-24 rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-1 text-xs font-bold text-left tabular-nums focus:outline-none focus:border-[#A67C52]"
+                    className="w-20 sm:w-24 rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2 py-1 text-xs font-bold text-left tabular-nums focus:outline-none focus:border-[#A67C52]"
                   />
                   <button
                     type="button"
@@ -213,20 +213,20 @@ export const CostCalculatorView: React.FC = () => {
             <div className="text-xs font-semibold text-[#1A1A1E]">
               إضافة بند مصاريف غير مباشرة
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-12 gap-2">
               <input
                 type="text"
                 value={newOverheadName}
                 onChange={(e) => setNewOverheadName(e.target.value)}
                 placeholder="مثال: رواتب إدارة / تصوير"
-                className="sm:col-span-5 rounded-lg border border-[#E5E3DD] px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
+                className="col-span-2 sm:col-span-5 rounded-lg border border-[#E5E3DD] px-2.5 py-2 sm:py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
               />
               <select
                 value={newOverheadCategory}
                 onChange={(e) =>
                   setNewOverheadCategory(e.target.value as OverheadItem['category'])
                 }
-                className="sm:col-span-3 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
+                className="sm:col-span-3 rounded-lg border border-[#E5E3DD] bg-white px-2 py-2 sm:py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
               >
                 {Object.entries(OVERHEAD_CATEGORY_LABELS).map(([k, label]) => (
                   <option key={k} value={k}>
@@ -240,14 +240,15 @@ export const CostCalculatorView: React.FC = () => {
                 value={newOverheadAmount || ''}
                 onChange={(e) => setNewOverheadAmount(Number(e.target.value))}
                 placeholder="المبلغ"
-                className="sm:col-span-2 rounded-lg border border-[#E5E3DD] px-2 py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
+                className="sm:col-span-2 rounded-lg border border-[#E5E3DD] px-2 py-2 sm:py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
               />
               <button
                 type="submit"
-                className="sm:col-span-2 inline-flex items-center justify-center rounded-lg bg-[#1A1A1E] hover:bg-[#2E2E35] text-white py-1.5 cursor-pointer"
+                className="col-span-2 sm:col-span-2 inline-flex items-center justify-center gap-1 rounded-lg bg-[#1A1A1E] hover:bg-[#2E2E35] text-white py-2 sm:py-1.5 text-xs font-bold cursor-pointer"
                 aria-label="إضافة بند"
               >
                 <Plus className="w-4 h-4" />
+                <span className="sm:hidden">إضافة البند</span>
               </button>
             </div>
           </form>
@@ -255,10 +256,10 @@ export const CostCalculatorView: React.FC = () => {
 
         {/* Left Column: Pricing Engine & Breakdown Chart */}
         <div className="xl:col-span-7 space-y-5">
-          <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-5">
+          <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5 space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#F0EFEA]">
               <div className="flex items-center gap-2.5">
-                <span className="w-9 h-9 rounded-xl bg-[#1A1A1E] text-[#BD956D] flex items-center justify-center">
+                <span className="w-9 h-9 rounded-xl bg-[#1A1A1E] text-[#BD956D] flex items-center justify-center shrink-0">
                   <Sliders className="w-4 h-4" />
                 </span>
                 <div>
@@ -274,7 +275,7 @@ export const CostCalculatorView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1A1A1E] bg-[#F3F2EE] hover:bg-[#E5E3DD] px-3 py-2 rounded-xl transition-colors cursor-pointer no-print"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 text-xs font-semibold text-[#1A1A1E] bg-[#F3F2EE] hover:bg-[#E5E3DD] px-3 py-2 rounded-xl transition-colors cursor-pointer no-print"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>طباعة بطاقة التسعير</span>
@@ -308,32 +309,32 @@ export const CostCalculatorView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setPricingMode('markup')}
-                    className={`py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    className={`py-2 px-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer ${
                       pricingMode === 'markup'
                         ? 'bg-[#1A1A1E] text-white'
                         : 'text-[#6E6C66]'
                     }`}
                   >
-                    نسبة على التكلفة (Markup)
+                    نسبة على التكلفة
                   </button>
                   <button
                     type="button"
                     onClick={() => setPricingMode('margin')}
-                    className={`py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    className={`py-2 px-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer ${
                       pricingMode === 'margin'
                         ? 'bg-[#1A1A1E] text-white'
                         : 'text-[#6E6C66]'
                     }`}
                   >
-                    هامش من السعر (Margin)
+                    هامش من السعر
                   </button>
                 </div>
               </div>
             </div>
 
             {/* Target Margin Slider */}
-            <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-4 space-y-3">
-              <div className="flex items-center justify-between gap-2">
+            <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-bold text-[#7B5836]">
                   {pricingMode === 'markup'
                     ? 'نسبة الإضافة على التكلفة (Markup %)'
@@ -376,33 +377,33 @@ export const CostCalculatorView: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center pt-2">
                 {/* Breakdown Lines */}
                 <div className="md:col-span-7 space-y-2.5">
-                  <div className="flex items-center justify-between py-2 border-b border-[#F0EFEA] text-sm">
+                  <div className="flex items-center justify-between gap-2 py-2 border-b border-[#F0EFEA] text-xs sm:text-sm">
                     <span className="text-[#4B4A46]">تكلفة الخامات والكلف (بالهالك)</span>
-                    <span className="font-bold text-[#1A1A1E] tabular-nums">
+                    <span className="font-bold text-[#1A1A1E] tabular-nums shrink-0">
                       {formatMoney(breakdown.directMaterialCost, state.currency)}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between py-2 border-b border-[#F0EFEA] text-sm">
+                  <div className="flex items-center justify-between gap-2 py-2 border-b border-[#F0EFEA] text-xs sm:text-sm">
                     <span className="text-[#4B4A46]">تكلفة العمالة والتشغيل الخارجي</span>
-                    <span className="font-bold text-[#1A1A1E] tabular-nums">
+                    <span className="font-bold text-[#1A1A1E] tabular-nums shrink-0">
                       {formatMoney(breakdown.directLaborCost, state.currency)}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between py-2 border-b border-[#F0EFEA] text-sm">
+                  <div className="flex items-center justify-between gap-2 py-2 border-b border-[#F0EFEA] text-xs sm:text-sm">
                     <span className="text-[#4B4A46]">نصيب القطعة من المصاريف غير المباشرة</span>
-                    <span className="font-bold text-[#1A1A1E] tabular-nums">
+                    <span className="font-bold text-[#1A1A1E] tabular-nums shrink-0">
                       {formatMoney(breakdown.indirectOverheadCost, state.currency)}
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-between py-2.5 px-3 rounded-xl bg-[#F3F2EE] text-sm">
+                  <div className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-xl bg-[#F3F2EE] text-xs sm:text-sm">
                     <span className="font-bold text-[#1A1A1E]">التكلفة الإجمالية للقطعة</span>
-                    <span className="text-base font-extrabold text-[#1A1A1E] tabular-nums">
+                    <span className="text-sm sm:text-base font-extrabold text-[#1A1A1E] tabular-nums shrink-0">
                       {formatMoney(breakdown.totalUnitCost, state.currency)}
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-between py-3 px-4 rounded-xl bg-[#1A1A1E] text-white">
+                  <div className="flex flex-wrap items-center justify-between gap-2 py-3 px-4 rounded-xl bg-[#1A1A1E] text-white">
                     <div>
                       <div className="text-xs text-[#D4B896]">سعر البيع المقترح للمتجر</div>
                       <div className="text-[11px] text-[#B4B2AA] mt-0.5">
@@ -410,7 +411,7 @@ export const CostCalculatorView: React.FC = () => {
                         {formatNumber(breakdown.effectiveMarginOnPricePct, 1)}% من السعر)
                       </div>
                     </div>
-                    <div className="text-xl font-extrabold text-[#BD956D] tabular-nums">
+                    <div className="text-lg sm:text-xl font-extrabold text-[#BD956D] tabular-nums">
                       {formatMoney(breakdown.suggestedRetailPrice, state.currency)}
                     </div>
                   </div>

@@ -169,9 +169,54 @@ export const OutsourcedLaborView: React.FC = () => {
         </button>
       </div>
 
-      {/* Operations Table */}
+      {/* Operations List (Mobile Cards + Desktop Table) */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {filtered.map((op) => {
+            const unitCost = getLaborStepUnitCost(op);
+            return (
+              <div key={op.id} className="p-3.5 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm text-[#1A1A1E]">{op.name}</div>
+                    <div className="text-xs text-[#6E6C66] mt-0.5">{op.workshopName}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(op)}
+                      className="p-2 rounded-lg bg-[#FAF9F7] text-[#4B4A46] cursor-pointer"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteOperation(op.id)}
+                      className="p-2 rounded-lg bg-red-50 text-red-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-xs bg-[#FAF9F7] rounded-xl p-2.5">
+                  <span className="px-2 py-0.5 rounded-full bg-white border border-[#E5E3DD] font-semibold">
+                    {op.billingType === 'per_batch' ? `باتش (${op.batchSize})` : 'بالقطعة'}
+                  </span>
+                  <span className="font-bold text-[#8E6742] tabular-nums">
+                    {formatMoney(unitCost, state.currency)} / قطعة
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <div className="p-8 text-center text-xs text-[#6E6C66]">
+              لا توجد مراحل تشغيل مطابقة للبحث.
+            </div>
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>

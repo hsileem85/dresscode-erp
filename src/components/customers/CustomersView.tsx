@@ -173,8 +173,8 @@ export const CustomersView: React.FC = () => {
       </div>
 
       {/* Filters */}
-      <div className="bg-white p-4 rounded-2xl border border-[#E5E3DD] flex flex-wrap items-center justify-between gap-3">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+      <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-[#E5E3DD] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="relative flex-1 w-full lg:max-w-md">
           <Search className="w-4 h-4 text-[#9C9990] absolute right-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -185,36 +185,128 @@ export const CustomersView: React.FC = () => {
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           {['all', 'مميز', 'VIP', 'عادي', 'جديد'].map((t) => (
             <button
               key={t}
               type="button"
               onClick={() => setTierFilter(t)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
                 tierFilter === t
                   ? 'bg-[#1A1A1E] text-white'
                   : 'bg-[#F3F2EE] text-[#6E6C66] hover:text-[#1A1A1E]'
               }`}
             >
-              {t === 'all' ? 'كل التصنيفات' : t}
+              {t === 'all' ? 'الكل' : t}
             </button>
           ))}
-          <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1A1A1E] mr-2 cursor-pointer">
+          <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1A1A1E] mr-1 sm:mr-2 py-1 cursor-pointer">
             <input
               type="checkbox"
               checked={debtOnly}
               onChange={(e) => setDebtOnly(e.target.checked)}
               className="accent-[#A67C52]"
             />
-            <span>لديهم رصيد متبقي فقط</span>
+            <span>عليهم رصيد متبقي</span>
           </label>
         </div>
       </div>
 
-      {/* Customers Table */}
+      {/* Customers List / Table */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-[#F0EFEA]">
+          {filtered.map((row) => (
+            <div key={row.customer.id} className="p-4 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-sm text-[#1A1A1E]">{row.customer.name}</span>
+                    <span
+                      className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                        row.tier === 'مميز'
+                          ? 'bg-[#1A1A1E] text-[#BD956D]'
+                          : row.tier === 'VIP'
+                          ? 'bg-[#F6EFE7] text-[#8E6742]'
+                          : row.tier === 'جديد'
+                          ? 'bg-sky-50 text-sky-700'
+                          : 'bg-[#F3F2EE] text-[#4B4A46]'
+                      }`}
+                    >
+                      {row.tier}
+                    </span>
+                  </div>
+                  <div className="text-xs text-[#6E6C66] flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
+                    <span>{row.customer.platform}</span>
+                    {row.customer.governorate && (
+                      <span className="inline-flex items-center gap-0.5">
+                        <MapPin className="w-3 h-3 text-[#A67C52]" />
+                        {row.customer.governorate}
+                      </span>
+                    )}
+                    {row.customer.phone && (
+                      <a
+                        href={`tel:${row.customer.phone}`}
+                        dir="ltr"
+                        className="text-[#8E6742] font-semibold underline"
+                      >
+                        {row.customer.phone}
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(row.customer)}
+                    aria-label="تعديل"
+                    className="p-1.5 rounded-lg text-[#4B4A46] hover:bg-[#F3F2EE] cursor-pointer"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteCustomer(row.customer.id)}
+                    aria-label="حذف"
+                    className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
+                <div>
+                  <div className="text-[10px] text-[#6E6C66]">
+                    المشتريات ({row.ordersCount} طلب)
+                  </div>
+                  <div className="font-bold tabular-nums mt-0.5">
+                    {formatMoney(row.totalSpent, state.currency)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-[#6E6C66]">المدفوع / المتبقي</div>
+                  <div className="font-semibold text-emerald-700 tabular-nums mt-0.5">
+                    {formatMoney(row.totalPaid, state.currency)}
+                  </div>
+                  {row.remainingDebt > 0 && (
+                    <div className="text-[10px] text-red-600 font-bold tabular-nums">
+                      دين: {formatMoney(row.remainingDebt, state.currency)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <div className="py-10 text-center text-xs text-[#6E6C66]">
+              لا يوجد عملاء مطابقون للبحث.
+            </div>
+          )}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>

@@ -8,6 +8,7 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { ExcelImportExportView } from './components/excel/ExcelImportExportView';
 import { ExpensesCashboxView } from './components/expenses/ExpensesCashboxView';
 import { OutsourcedLaborView } from './components/labor/OutsourcedLaborView';
+import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { MaterialsView } from './components/materials/MaterialsView';
@@ -44,7 +45,7 @@ const ERPShell: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex bg-[#F7F6F3] text-[#1A1A1E]">
+    <div className="min-h-screen flex bg-[#F7F6F3] text-[#1A1A1E] overflow-x-hidden">
       <Sidebar
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
@@ -54,11 +55,11 @@ const ERPShell: React.FC = () => {
         <TopBar onOpenMobile={() => setMobileMenuOpen(true)} />
 
         {migration003Missing && (
-          <div className="mx-4 sm:mx-6 lg:mx-8 mt-4 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-2.5 text-xs font-semibold text-amber-900">
-            <Database className="w-4 h-4 shrink-0 text-amber-700" />
-            <span>
+          <div className="mx-3.5 sm:mx-6 lg:mx-8 mt-3 sm:mt-4 rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 flex items-start sm:items-center gap-2.5 text-xs font-semibold text-amber-900">
+            <Database className="w-4 h-4 shrink-0 text-amber-700 mt-0.5 sm:mt-0" />
+            <span className="leading-relaxed">
               لتفعيل سجل المصروفات والخزنة ورأس مال الشركاء على السحابة، نفّذ ملف التحديث{' '}
-              <code className="font-mono bg-amber-100 px-1.5 py-0.5 rounded">
+              <code className="font-mono bg-amber-100 px-1.5 py-0.5 rounded break-all">
                 003_excel_parity_crm_expenses_pnl.sql
               </code>{' '}
               في Supabase SQL Editor.
@@ -67,22 +68,22 @@ const ERPShell: React.FC = () => {
         )}
 
         {syncError && (
-          <div className="mx-4 sm:mx-6 lg:mx-8 mt-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-center justify-between gap-3 text-xs font-semibold text-red-800">
-            <div className="flex items-center gap-2">
+          <div className="mx-3.5 sm:mx-6 lg:mx-8 mt-3 sm:mt-4 rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs font-semibold text-red-800">
+            <div className="flex items-center gap-2 min-w-0">
               <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{syncError}</span>
+              <span className="break-words">{syncError}</span>
             </div>
             <button
               type="button"
               onClick={clearSyncError}
-              className="p-1 hover:bg-red-100 rounded-lg cursor-pointer"
+              className="p-1 hover:bg-red-100 rounded-lg cursor-pointer shrink-0"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
+        <main className="flex-1 p-3.5 sm:p-6 lg:p-8 pb-24 lg:pb-8 max-w-[1600px] w-full mx-auto">
           {activeTab === 'dashboard' && <DashboardView />}
           {activeTab === 'basicdata' && <BasicDataView />}
           {activeTab === 'materials' && <MaterialsView />}
@@ -97,6 +98,8 @@ const ERPShell: React.FC = () => {
           {activeTab === 'excel' && <ExcelImportExportView />}
         </main>
       </div>
+
+      <MobileBottomNav onOpenDrawer={() => setMobileMenuOpen(true)} />
     </div>
   );
 };
