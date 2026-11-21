@@ -64,6 +64,22 @@ export function getOverheadPerPiece(overhead: OverheadConfig): number {
  * or Markup on Cost when pricingMode === 'markup'. Default is markup-on-cost for apparel ERP clarity,
  * with effective margin on retail price also returned.
  */
+export function getQuickDirectMaterialCost(model: ProductModel): number {
+  return (
+    (Number(model.quickFabricCost) || 0) +
+    (Number(model.quickShippingCost) || 0) +
+    (Number(model.quickPackagingCost) || 0) +
+    (Number(model.quickAccessoriesCost) || 0)
+  );
+}
+
+export function getQuickDirectLaborCost(model: ProductModel): number {
+  return (
+    (Number(model.quickOverlockCost) || 0) +
+    (Number(model.quickSewingCost) || 0)
+  );
+}
+
 export function calculateModelCost(
   model: ProductModel,
   fabrics: Fabric[],
@@ -72,20 +88,24 @@ export function calculateModelCost(
   overrideMarginPct?: number,
   pricingMode: 'markup' | 'margin' = 'markup'
 ): ModelCostBreakdown {
-  const fabricCost = model.fabrics.reduce(
-    (sum, item) => sum + getFabricLineCost(item, fabrics),
-    0
-  );
-  const trimCost = model.trims.reduce(
-    (sum, item) => sum + getTrimLineCost(item, trims),
-    0
-  );
+  const hasBomMaterials = model.fabrics.length > 0 || model.trims.length > 0;
+  const fabricCost = hasBomMaterials
+    ? model.fabrics.reduce((sum, item) => sum + getFabricLineCost(item, fabrics), 0)
+    : (Number(model.quickFabricCost) || 0) + (Number(model.quickShippingCost) || 0);
+
+  const trimCost = hasBomMaterials
+    ? model.trims.reduce((sum, item) => sum + getTrimLineCost(item, trims), 0)
+    : (Number(model.quickPackagingCost) || 0) + (Number(model.quickAccessoriesCost) || 0);
+
   const directMaterialCost = fabricCost + trimCost;
 
-  const directLaborCost = model.laborSteps.reduce(
-    (sum, step: ModelLaborItem) => sum + getLaborStepUnitCost(step),
-    0
-  );
+  const hasBomLabor = model.laborSteps.length > 0;
+  const directLaborCost = hasBomLabor
+    ? model.laborSteps.reduce(
+        (sum, step: ModelLaborItem) => sum + getLaborStepUnitCost(step),
+        0
+      )
+    : getQuickDirectLaborCost(model);
 
   const indirectOverheadCost = getOverheadPerPiece(overhead);
   const totalUnitCost = directMaterialCost + directLaborCost + indirectOverheadCost;

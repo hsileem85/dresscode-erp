@@ -2,6 +2,67 @@ import type { ERPState } from '../types/erp';
 
 export const SEED_DATA: ERPState = {
   currency: 'EGP',
+  customers: [
+    {
+      id: 'c0000001-1111-4111-a111-111111111101',
+      name: 'هبةالله ربيع عامر',
+      phone: '',
+      platform: 'واتساب',
+      governorate: 'العريش',
+      customerType: 'retail',
+    },
+    {
+      id: 'c0000001-1111-4111-a111-111111111102',
+      name: 'دعاء مامت كنده',
+      phone: '',
+      platform: 'واتساب',
+      governorate: 'القاهرة',
+      customerType: 'retail',
+    },
+  ],
+  expenses: [
+    {
+      id: 'e0000001-1111-4111-a111-111111111101',
+      expenseDate: '2026-06-01',
+      title: 'شنط البراند',
+      category: 'تسويق',
+      isRawMaterialPurchase: false,
+      amount: 2400,
+      paymentMethod: 'تحويل',
+    },
+    {
+      id: 'e0000001-1111-4111-a111-111111111102',
+      expenseDate: '2026-06-01',
+      title: 'مرتب حبيبة',
+      category: 'ثابت',
+      isRawMaterialPurchase: false,
+      amount: 1000,
+      paymentMethod: 'كاش',
+    },
+  ],
+  partnerContributions: [
+    {
+      id: 'p0000001-1111-4111-a111-111111111101',
+      partnerName: 'رنا',
+      contributionDate: '2026-04-01',
+      amount: 19370,
+      notes: 'رأس مال افتتاحي',
+    },
+    {
+      id: 'p0000001-1111-4111-a111-111111111102',
+      partnerName: 'ريهام',
+      contributionDate: '2026-04-01',
+      amount: 19380,
+      notes: 'رأس مال افتتاحي',
+    },
+    {
+      id: 'p0000001-1111-4111-a111-111111111103',
+      partnerName: 'سلمي',
+      contributionDate: '2026-04-01',
+      amount: 7000,
+      notes: 'رأس مال افتتاحي',
+    },
+  ],
   suppliers: [
     {
       id: '11111111-1111-1111-1111-111111111101',
@@ -481,12 +542,17 @@ export const SEED_DATA: ERPState = {
       orderNumber: 'SO-2026-001',
       customerName: 'سارة أحمد (طلب متجر إلكتروني)',
       channel: 'online_store',
+      platform: 'واتساب',
       orderDate: '2026-11-21',
       status: 'confirmed',
+      fulfillmentStatus: 'مكتمل',
       subtotal: 4350,
       discountAmount: 100,
       shippingFee: 65,
       totalAmount: 4315,
+      paidAmount: 4315,
+      remainingDebt: 0,
+      paymentStatus: 'مدفوع بالكامل',
       totalCogs: 2516.49,
       grossProfit: 1733.51,
       items: [

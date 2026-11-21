@@ -12,6 +12,8 @@ import {
   Receipt,
   Scissors,
   ShoppingBag,
+  Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
@@ -32,8 +34,8 @@ const NAV_ITEMS: {
 }[] = [
   {
     id: 'dashboard',
-    label: 'لوحة التحكم',
-    sublabel: 'نظرة عامة ومؤشرات التكلفة',
+    label: 'لوحة التحكم والأرباح (P&L)',
+    sublabel: 'الملخص الشهري ونقطة التعادل',
     icon: LayoutDashboard,
   },
   {
@@ -45,7 +47,7 @@ const NAV_ITEMS: {
   {
     id: 'models',
     label: 'الموديلات والباترون',
-    sublabel: 'بطاقة تكلفة الموديل (BOM)',
+    sublabel: 'بطاقة التكلفة والتسعير الفعلي',
     icon: Scissors,
   },
   {
@@ -74,9 +76,21 @@ const NAV_ITEMS: {
   },
   {
     id: 'sales',
-    label: 'المبيعات والأرباح',
-    sublabel: 'فواتير المتجر وحركة المخزون',
+    label: 'الطلبات والمبيعات',
+    sublabel: 'التحصيل والديون وحالة التسليم',
     icon: Receipt,
+  },
+  {
+    id: 'customers',
+    label: 'العملاء (CRM)',
+    sublabel: 'التصنيفات والمحافظات والديون',
+    icon: Users,
+  },
+  {
+    id: 'expenses',
+    label: 'المصروفات والخزنة',
+    sublabel: 'المتاح ورأس مال الشركاء',
+    icon: Wallet,
   },
   {
     id: 'excel',

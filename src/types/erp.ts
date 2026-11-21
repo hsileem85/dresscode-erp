@@ -7,6 +7,8 @@ export type NavTab =
   | 'purchases'
   | 'production'
   | 'sales'
+  | 'customers'
+  | 'expenses'
   | 'excel';
 
 export type CurrencyCode = 'EGP' | 'SAR' | 'AED' | 'USD';
@@ -38,6 +40,16 @@ export interface Workshop {
   phone?: string;
   specialty?: string;
   balancePayable: number;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone?: string;
+  platform: string; // واتساب | انستجرام | المتجر | مباشر
+  governorate?: string;
+  customerType?: string;
+  notes?: string;
 }
 
 export type FabricUnit = 'meter' | 'kg';
@@ -140,6 +152,16 @@ export interface ProductModel {
   season: string;
   status: ModelStatus;
   targetMarginPct: number;
+  // Actual & Compare-At pricing + Quick Direct Costing (from تكلفة المنتجات)
+  actualRetailPrice?: number;
+  compareAtPrice?: number;
+  quickFabricCost?: number;
+  quickShippingCost?: number;
+  quickOverlockCost?: number;
+  quickPackagingCost?: number;
+  quickSewingCost?: number;
+  quickAccessoriesCost?: number;
+  initialStock?: number;
   fabrics: ModelFabricItem[];
   trims: ModelTrimItem[];
   laborSteps: ModelLaborItem[];
@@ -159,6 +181,25 @@ export interface OverheadItem {
 export interface OverheadConfig {
   estimatedMonthlyVolume: number;
   items: OverheadItem[];
+}
+
+export interface ExpenseRecord {
+  id: string;
+  expenseDate: string;
+  title: string;
+  category: string; // ثابت | متغير | تسويق | خامات
+  isRawMaterialPurchase: boolean;
+  amount: number;
+  paymentMethod: string; // كاش | تحويل | إنستاباي
+  notes?: string;
+}
+
+export interface PartnerContribution {
+  id: string;
+  partnerName: string;
+  contributionDate: string;
+  amount: number;
+  notes?: string;
 }
 
 export type PurchaseOrderStatus = 'draft' | 'ordered' | 'received' | 'cancelled';
@@ -236,14 +277,20 @@ export interface SalesOrderItem {
 export interface SalesOrder {
   id: string;
   orderNumber: string;
+  customerId?: string | null;
   customerName: string;
   channel: SalesChannel;
+  platform: string; // واتساب | انستجرام | المتجر | مباشر
   orderDate: string;
   status: SalesOrderStatus;
+  fulfillmentStatus: string; // قيد التجهيز | واصل | مكتمل | مرتجع
   subtotal: number;
   discountAmount: number;
   shippingFee: number;
   totalAmount: number;
+  paidAmount: number;
+  remainingDebt: number;
+  paymentStatus: 'مدفوع بالكامل' | 'دفع جزئي' | 'لم يدفع';
   totalCogs: number;
   grossProfit: number;
   notes?: string;
@@ -268,11 +315,14 @@ export interface ERPState {
   currency: CurrencyCode;
   suppliers: Supplier[];
   workshops: Workshop[];
+  customers: Customer[];
   fabrics: Fabric[];
   trims: TrimAccessory[];
   operations: OutsourcedOperation[];
   models: ProductModel[];
   overhead: OverheadConfig;
+  expenses: ExpenseRecord[];
+  partnerContributions: PartnerContribution[];
   purchaseOrders: PurchaseOrder[];
   productionOrders: ProductionOrder[];
   salesOrders: SalesOrder[];

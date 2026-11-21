@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import type { User } from '@supabase/supabase-js';
 import { SEED_DATA } from '../data/seedData';
 import {
+  computePaymentStatus,
   erpDb,
   fetchFullERPState,
   isSupabaseConfigured,
@@ -10,18 +11,21 @@ import {
 } from '../lib/supabase';
 import type {
   CurrencyCode,
+  Customer,
   ERPState,
+  ExpenseRecord,
   Fabric,
   ModelVariant,
   NavTab,
   OutsourcedOperation,
   OverheadItem,
+  PartnerContribution,
   ProductModel,
   SalesChannel,
   TrimAccessory,
 } from '../types/erp';
 
-const STORAGE_KEY = 'dresscode_erp_state_v2';
+const STORAGE_KEY = 'dresscode_erp_state_v3';
 
 interface ERPContextValue {
   state: ERPState;
@@ -38,6 +42,7 @@ interface ERPContextValue {
   offlineMode: boolean;
   setOfflineMode: (v: boolean) => void;
   cloudConnected: boolean;
+  migration003Missing: boolean;
   syncing: boolean;
   syncError: string | null;
   clearSyncError: () => void;
@@ -46,6 +51,16 @@ interface ERPContextValue {
 
   // Core settings
   setCurrency: (currency: CurrencyCode) => void;
+
+  // Customers CRM
+  saveCustomer: (customer: Customer) => void;
+  deleteCustomer: (id: string) => void;
+
+  // Expenses & Partner Capital
+  saveExpense: (expense: ExpenseRecord) => void;
+  deleteExpense: (id: string) => void;
+  savePartnerContribution: (contrib: PartnerContribution) => void;
+  deletePartnerContribution: (id: string) => void;
 
   // Fabrics
   saveFabric: (fabric: Fabric) => void;
@@ -104,15 +119,21 @@ interface ERPContextValue {
 
   createSalesOrder: (payload: {
     orderNumber: string;
+    customerId?: string | null;
     customerName: string;
     channel: SalesChannel;
+    platform: string;
     discountAmount: number;
     shippingFee: number;
+    paidAmount: number;
+    fulfillmentStatus: string;
     confirmImmediately: boolean;
     notes?: string;
     items: { variantId: string; quantity: number; unitPrice: number }[];
   }) => Promise<void>;
   confirmSalesOrder: (saleId: string) => Promise<void>;
+  recordSalesPayment: (saleId: string, amount: number, method?: string) => Promise<void>;
+  updateSalesFulfillment: (saleId: string, status: string) => Promise<void>;
 
   // Data management
   importFullJSON: (data: ERPState) => void;
@@ -134,6 +155,7 @@ function loadLocalState(): ERPState {
       currency: parsed.currency || 'EGP',
       suppliers: Array.isArray(parsed.suppliers) ? parsed.suppliers : SEED_DATA.suppliers,
       workshops: Array.isArray(parsed.workshops) ? parsed.workshops : SEED_DATA.workshops,
+      customers: Array.isArray(parsed.customers) ? parsed.customers : SEED_DATA.customers,
       fabrics: parsed.fabrics.map((f) => ({
         ...f,
         stockQty: f.stockQty ?? 0,
@@ -155,6 +177,10 @@ function loadLocalState(): ERPState {
         parsed.overhead && Array.isArray(parsed.overhead.items)
           ? parsed.overhead
           : SEED_DATA.overhead,
+      expenses: Array.isArray(parsed.expenses) ? parsed.expenses : SEED_DATA.expenses,
+      partnerContributions: Array.isArray(parsed.partnerContributions)
+        ? parsed.partnerContributions
+        : SEED_DATA.partnerContributions,
       purchaseOrders: Array.isArray(parsed.purchaseOrders)
         ? parsed.purchaseOrders
         : SEED_DATA.purchaseOrders,
@@ -162,7 +188,18 @@ function loadLocalState(): ERPState {
         ? parsed.productionOrders
         : SEED_DATA.productionOrders,
       salesOrders: Array.isArray(parsed.salesOrders)
-        ? parsed.salesOrders
+        ? parsed.salesOrders.map((s) => {
+            const total = s.totalAmount ?? 0;
+            const paid = s.paidAmount ?? total;
+            return {
+              ...s,
+              platform: s.platform || 'واتساب',
+              fulfillmentStatus: s.fulfillmentStatus || 'مكتمل',
+              paidAmount: paid,
+              remainingDebt: s.remainingDebt ?? Math.max(total - paid, 0),
+              paymentStatus: s.paymentStatus || computePaymentStatus(total, paid),
+            };
+          })
         : SEED_DATA.salesOrders,
       inventoryMovements: Array.isArray(parsed.inventoryMovements)
         ? parsed.inventoryMovements
@@ -183,10 +220,10 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
   );
 
-  // Supabase auth & sync state
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState<boolean>(!isSupabaseConfigured);
   const [offlineMode, setOfflineMode] = useState<boolean>(!isSupabaseConfigured);
+  const [migration003Missing, setMigration003Missing] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -202,8 +239,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSyncing(true);
     setSyncError(null);
     try {
-      const fresh = await fetchFullERPState();
+      const { state: fresh, migration003Missing: missing } = await fetchFullERPState();
       setState(fresh);
+      setMigration003Missing(missing);
       setSelectedModelId((prev) =>
         fresh.models.some((m) => m.id === prev) ? prev : fresh.models[0]?.id ?? null
       );
@@ -215,7 +253,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Watch Supabase Auth session
   useEffect(() => {
     if (!supabase) return;
     let mounted = true;
@@ -243,14 +280,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  // Load cloud DB whenever authenticated
   useEffect(() => {
     if (cloudConnected) {
       void refreshFromCloud();
     }
   }, [cloudConnected, refreshFromCloud]);
 
-  // Persist local cache
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -267,8 +302,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fn();
       if (shouldRefresh) {
-        const fresh = await fetchFullERPState();
+        const { state: fresh, migration003Missing: missing } = await fetchFullERPState();
         setState(fresh);
+        setMigration003Missing(missing);
       }
       stampSaved();
     } catch (err) {
@@ -299,6 +335,71 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openModelInBOM = (modelId: string) => {
     setSelectedModelId(modelId);
     setActiveTab('models');
+  };
+
+  // Customers CRM
+  const saveCustomer = (customer: Customer) => {
+    setState((prev) => {
+      const exists = prev.customers.some((c) => c.id === customer.id);
+      return {
+        ...prev,
+        customers: exists
+          ? prev.customers.map((c) => (c.id === customer.id ? customer : c))
+          : [customer, ...prev.customers],
+      };
+    });
+    void runCloud(() => erpDb.upsertCustomer(customer));
+  };
+
+  const deleteCustomer = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      customers: prev.customers.filter((c) => c.id !== id),
+    }));
+    void runCloud(() => erpDb.deleteCustomer(id));
+  };
+
+  // Expenses & Partner Capital
+  const saveExpense = (expense: ExpenseRecord) => {
+    setState((prev) => {
+      const exists = prev.expenses.some((e) => e.id === expense.id);
+      return {
+        ...prev,
+        expenses: exists
+          ? prev.expenses.map((e) => (e.id === expense.id ? expense : e))
+          : [expense, ...prev.expenses],
+      };
+    });
+    void runCloud(() => erpDb.upsertExpense(expense));
+  };
+
+  const deleteExpense = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      expenses: prev.expenses.filter((e) => e.id !== id),
+    }));
+    void runCloud(() => erpDb.deleteExpense(id));
+  };
+
+  const savePartnerContribution = (contrib: PartnerContribution) => {
+    setState((prev) => {
+      const exists = prev.partnerContributions.some((p) => p.id === contrib.id);
+      return {
+        ...prev,
+        partnerContributions: exists
+          ? prev.partnerContributions.map((p) => (p.id === contrib.id ? contrib : p))
+          : [contrib, ...prev.partnerContributions],
+      };
+    });
+    void runCloud(() => erpDb.upsertPartnerContribution(contrib));
+  };
+
+  const deletePartnerContribution = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      partnerContributions: prev.partnerContributions.filter((p) => p.id !== id),
+    }));
+    void runCloud(() => erpDb.deletePartnerContribution(id));
   };
 
   // Fabrics
@@ -491,7 +592,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     void runCloud(() => erpDb.deleteOverheadItem(id));
   };
 
-  // Full-cycle: Purchases
+  // Purchases
   const createAndReceivePO: ERPContextValue['createAndReceivePO'] = async (payload) => {
     if (cloudConnected) {
       await runCloud(async () => {
@@ -503,7 +604,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    // Offline fallback
     const poId = newUuid();
     const total = payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
     setState((prev) => {
@@ -524,8 +624,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } else if (item.itemType === 'trim' && item.trimId) {
             nextTrims = nextTrims.map((t) => {
               if (t.id !== item.trimId) return t;
-              const addedUnits = item.quantity * item.unitsPerPack;
-              return { ...t, stockQty: t.stockQty + addedUnits };
+              return { ...t, stockQty: t.stockQty + item.quantity * item.unitsPerPack };
             });
           }
         }
@@ -592,7 +691,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  // Full-cycle: Production Orders
+  // Production
   const createProductionBatch: ERPContextValue['createProductionBatch'] = async (payload) => {
     if (cloudConnected) {
       await runCloud(async () => {
@@ -674,7 +773,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  // Full-cycle: Sales Orders
+  // Sales Orders, Payments & Fulfillment
   const createSalesOrder: ERPContextValue['createSalesOrder'] = async (payload) => {
     if (cloudConnected) {
       await runCloud(async () => {
@@ -686,20 +785,29 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     const subtotal = payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const totalAmount = subtotal - payload.discountAmount + payload.shippingFee;
+    const paid = payload.paidAmount;
+    const remainingDebt = Math.max(totalAmount - paid, 0);
     setState((prev) => ({
       ...prev,
       salesOrders: [
         {
           id: newUuid(),
           orderNumber: payload.orderNumber,
+          customerId: payload.customerId,
           customerName: payload.customerName,
           channel: payload.channel,
+          platform: payload.platform,
           orderDate: new Date().toISOString().slice(0, 10),
           status: payload.confirmImmediately ? 'confirmed' : 'draft',
+          fulfillmentStatus: payload.fulfillmentStatus,
           subtotal,
           discountAmount: payload.discountAmount,
           shippingFee: payload.shippingFee,
-          totalAmount: subtotal - payload.discountAmount + payload.shippingFee,
+          totalAmount,
+          paidAmount: paid,
+          remainingDebt,
+          paymentStatus: computePaymentStatus(totalAmount, paid),
           totalCogs: 0,
           grossProfit: subtotal - payload.discountAmount,
           notes: payload.notes,
@@ -731,6 +839,39 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  const recordSalesPayment = async (saleId: string, amount: number, method = 'تحويل') => {
+    if (cloudConnected) {
+      await runCloud(() => erpDb.recordSalesPayment(saleId, amount, method));
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      salesOrders: prev.salesOrders.map((s) => {
+        if (s.id !== saleId) return s;
+        const paidAmount = s.paidAmount + amount;
+        const remainingDebt = Math.max(s.totalAmount - paidAmount, 0);
+        return {
+          ...s,
+          paidAmount,
+          remainingDebt,
+          paymentStatus: computePaymentStatus(s.totalAmount, paidAmount),
+        };
+      }),
+    }));
+  };
+
+  const updateSalesFulfillment = async (saleId: string, fulfillmentStatus: string) => {
+    setState((prev) => ({
+      ...prev,
+      salesOrders: prev.salesOrders.map((s) =>
+        s.id === saleId ? { ...s, fulfillmentStatus } : s
+      ),
+    }));
+    if (cloudConnected) {
+      await runCloud(() => erpDb.updateSalesFulfillment(saleId, fulfillmentStatus), false);
+    }
+  };
+
   const importFullJSON = (data: ERPState) => {
     setState(data);
     setSelectedModelId(data.models[0]?.id ?? null);
@@ -756,12 +897,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         offlineMode,
         setOfflineMode,
         cloudConnected,
+        migration003Missing,
         syncing,
         syncError,
         clearSyncError: () => setSyncError(null),
         refreshFromCloud,
         signOut,
         setCurrency,
+        saveCustomer,
+        deleteCustomer,
+        saveExpense,
+        deleteExpense,
+        savePartnerContribution,
+        deletePartnerContribution,
         saveFabric,
         deleteFabric,
         importFabrics,
@@ -786,6 +934,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         completeProductionBatch,
         createSalesOrder,
         confirmSalesOrder,
+        recordSalesPayment,
+        updateSalesFulfillment,
         importFullJSON,
         resetToSeedData,
         lastSavedAt,

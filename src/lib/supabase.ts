@@ -1,12 +1,15 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   CurrencyCode,
+  Customer,
   ERPState,
+  ExpenseRecord,
   Fabric,
   InventoryMovement,
   ModelVariant,
   OutsourcedOperation,
   OverheadItem,
+  PartnerContribution,
   ProductModel,
   ProductionOrder,
   PurchaseOrder,
@@ -47,12 +50,25 @@ function db(): SupabaseClient {
   return supabase;
 }
 
-export async function fetchFullERPState(): Promise<ERPState> {
+export function computePaymentStatus(
+  totalAmount: number,
+  paidAmount: number
+): SalesOrder['paymentStatus'] {
+  if (paidAmount <= 0) return 'لم يدفع';
+  if (paidAmount >= totalAmount) return 'مدفوع بالكامل';
+  return 'دفع جزئي';
+}
+
+export async function fetchFullERPState(): Promise<{
+  state: ERPState;
+  migration003Missing: boolean;
+}> {
   const client = db();
   const [
     settingsRes,
     suppliersRes,
     workshopsRes,
+    customersRes,
     fabricsRes,
     trimsRes,
     opsRes,
@@ -62,6 +78,8 @@ export async function fetchFullERPState(): Promise<ERPState> {
     mTrimRes,
     mLaborRes,
     overheadRes,
+    expensesRes,
+    partnersRes,
     poRes,
     poItemsRes,
     prodRes,
@@ -73,6 +91,7 @@ export async function fetchFullERPState(): Promise<ERPState> {
     client.from('app_settings').select('*').eq('id', 1).maybeSingle(),
     client.from('suppliers').select('*').order('created_at', { ascending: false }),
     client.from('workshops').select('*').order('created_at', { ascending: false }),
+    client.from('customers').select('*').order('created_at', { ascending: false }),
     client.from('fabrics').select('*').order('created_at', { ascending: false }),
     client.from('trims').select('*').order('created_at', { ascending: false }),
     client.from('outsourced_operations').select('*').order('created_at', { ascending: false }),
@@ -82,23 +101,29 @@ export async function fetchFullERPState(): Promise<ERPState> {
     client.from('model_trims').select('*'),
     client.from('model_labor_steps').select('*').order('sequence_order'),
     client.from('overhead_items').select('*').order('created_at'),
+    client.from('expenses').select('*').order('expense_date', { ascending: false }),
+    client.from('partner_contributions').select('*').order('contribution_date', { ascending: false }),
     client.from('purchase_orders').select('*').order('created_at', { ascending: false }),
     client.from('purchase_order_items').select('*'),
     client.from('production_orders').select('*').order('created_at', { ascending: false }),
     client.from('production_order_variants').select('*'),
-    client.from('sales_orders').select('*').order('created_at', { ascending: false }),
+    client.from('sales_orders').select('*').order('order_date', { ascending: false }),
     client.from('sales_order_items').select('*'),
     client
       .from('inventory_movements')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(60),
+      .limit(80),
   ]);
 
-  const errors = [
+  // Gracefully detect if Migration 003 hasn't been executed yet in Supabase
+  const migration003Missing = Boolean(expensesRes.error || partnersRes.error);
+
+  const coreErrors = [
     settingsRes.error,
     suppliersRes.error,
     workshopsRes.error,
+    customersRes.error,
     fabricsRes.error,
     trimsRes.error,
     opsRes.error,
@@ -117,8 +142,8 @@ export async function fetchFullERPState(): Promise<ERPState> {
     movesRes.error,
   ].filter(Boolean);
 
-  if (errors.length > 0) {
-    throw new Error(errors[0]!.message);
+  if (coreErrors.length > 0) {
+    throw new Error(coreErrors[0]!.message);
   }
 
   const suppliers: Supplier[] = (suppliersRes.data || []).map((r) => ({
@@ -135,6 +160,16 @@ export async function fetchFullERPState(): Promise<ERPState> {
     phone: r.phone || '',
     specialty: r.specialty || '',
     balancePayable: Number(r.balance_payable) || 0,
+  }));
+
+  const customers: Customer[] = (customersRes.data || []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    phone: r.phone || '',
+    platform: r.platform || 'واتساب',
+    governorate: r.governorate || r.city || '',
+    customerType: r.customer_type || 'retail',
+    notes: r.notes || '',
   }));
 
   const fabrics: Fabric[] = (fabricsRes.data || []).map((r) => ({
@@ -199,6 +234,15 @@ export async function fetchFullERPState(): Promise<ERPState> {
     season: m.season,
     status: m.status,
     targetMarginPct: Number(m.target_margin_pct) || 65,
+    actualRetailPrice: Number(m.actual_retail_price) || 0,
+    compareAtPrice: Number(m.compare_at_price) || 0,
+    quickFabricCost: Number(m.quick_fabric_cost) || 0,
+    quickShippingCost: Number(m.quick_shipping_cost) || 0,
+    quickOverlockCost: Number(m.quick_overlock_cost) || 0,
+    quickPackagingCost: Number(m.quick_packaging_cost) || 0,
+    quickSewingCost: Number(m.quick_sewing_cost) || 0,
+    quickAccessoriesCost: Number(m.quick_accessories_cost) || 0,
+    initialStock: Number(m.initial_stock) || 0,
     notes: m.notes || '',
     updatedAt: String(m.updated_at || '').slice(0, 10),
     fabrics: (mFabRes.data || [])
@@ -237,6 +281,25 @@ export async function fetchFullERPState(): Promise<ERPState> {
     category: o.category,
     monthlyAmount: Number(o.monthly_amount) || 0,
     notes: o.notes || '',
+  }));
+
+  const expenses: ExpenseRecord[] = (expensesRes.data || []).map((e) => ({
+    id: e.id,
+    expenseDate: e.expense_date,
+    title: e.title,
+    category: e.category || 'متغير',
+    isRawMaterialPurchase: Boolean(e.is_raw_material_purchase),
+    amount: Number(e.amount) || 0,
+    paymentMethod: e.payment_method || 'كاش',
+    notes: e.notes || '',
+  }));
+
+  const partnerContributions: PartnerContribution[] = (partnersRes.data || []).map((p) => ({
+    id: p.id,
+    partnerName: p.partner_name,
+    contributionDate: p.contribution_date,
+    amount: Number(p.amount) || 0,
+    notes: p.notes || '',
   }));
 
   const purchaseOrders: PurchaseOrder[] = (poRes.data || []).map((po) => ({
@@ -288,32 +351,48 @@ export async function fetchFullERPState(): Promise<ERPState> {
       })),
   }));
 
-  const salesOrders: SalesOrder[] = (salesRes.data || []).map((s) => ({
-    id: s.id,
-    orderNumber: s.order_number,
-    customerName: s.customer_name,
-    channel: s.channel,
-    orderDate: s.order_date,
-    status: s.status,
-    subtotal: Number(s.subtotal) || 0,
-    discountAmount: Number(s.discount_amount) || 0,
-    shippingFee: Number(s.shipping_fee) || 0,
-    totalAmount: Number(s.total_amount) || 0,
-    totalCogs: Number(s.total_cogs) || 0,
-    grossProfit: Number(s.gross_profit) || 0,
-    notes: s.notes || '',
-    items: (salesItemsRes.data || [])
-      .filter((it) => it.sales_order_id === s.id)
-      .map((it) => ({
-        id: it.id,
-        variantId: it.variant_id,
-        quantity: Number(it.quantity) || 0,
-        unitPrice: Number(it.unit_price) || 0,
-        unitCogsSnapshot: Number(it.unit_cogs_snapshot) || 0,
-        lineTotal: Number(it.line_total) || 0,
-        lineCogs: Number(it.line_cogs) || 0,
-      })),
-  }));
+  const salesOrders: SalesOrder[] = (salesRes.data || []).map((s) => {
+    const totalAmount = Number(s.total_amount) || 0;
+    const paidAmount = Number(s.paid_amount) || 0;
+    const remainingDebt =
+      s.remaining_debt !== undefined
+        ? Number(s.remaining_debt) || 0
+        : Math.max(totalAmount - paidAmount, 0);
+    return {
+      id: s.id,
+      orderNumber: s.order_number,
+      customerId: s.customer_id,
+      customerName: s.customer_name,
+      channel: s.channel,
+      platform: s.platform || (s.channel === 'online_store' ? 'المتجر' : 'واتساب'),
+      orderDate: s.order_date,
+      status: s.status,
+      fulfillmentStatus: s.fulfillment_status || 'مكتمل',
+      subtotal: Number(s.subtotal) || 0,
+      discountAmount: Number(s.discount_amount) || 0,
+      shippingFee: Number(s.shipping_fee) || 0,
+      totalAmount,
+      paidAmount,
+      remainingDebt,
+      paymentStatus:
+        (s.payment_status as SalesOrder['paymentStatus']) ||
+        computePaymentStatus(totalAmount, paidAmount),
+      totalCogs: Number(s.total_cogs) || 0,
+      grossProfit: Number(s.gross_profit) || 0,
+      notes: s.notes || '',
+      items: (salesItemsRes.data || [])
+        .filter((it) => it.sales_order_id === s.id)
+        .map((it) => ({
+          id: it.id,
+          variantId: it.variant_id,
+          quantity: Number(it.quantity) || 0,
+          unitPrice: Number(it.unit_price) || 0,
+          unitCogsSnapshot: Number(it.unit_cogs_snapshot) || 0,
+          lineTotal: Number(it.line_total) || 0,
+          lineCogs: Number(it.line_cogs) || 0,
+        })),
+    };
+  });
 
   const inventoryMovements: InventoryMovement[] = (movesRes.data || []).map((mv) => ({
     id: mv.id,
@@ -330,21 +409,27 @@ export async function fetchFullERPState(): Promise<ERPState> {
   }));
 
   return {
-    currency: (settingsRes.data?.currency as CurrencyCode) || 'EGP',
-    suppliers,
-    workshops,
-    fabrics,
-    trims,
-    operations,
-    models,
-    overhead: {
-      estimatedMonthlyVolume: Number(settingsRes.data?.estimated_monthly_volume) || 600,
-      items: overheadItems,
+    migration003Missing,
+    state: {
+      currency: (settingsRes.data?.currency as CurrencyCode) || 'EGP',
+      suppliers,
+      workshops,
+      customers,
+      fabrics,
+      trims,
+      operations,
+      models,
+      overhead: {
+        estimatedMonthlyVolume: Number(settingsRes.data?.estimated_monthly_volume) || 600,
+        items: overheadItems,
+      },
+      expenses,
+      partnerContributions,
+      purchaseOrders,
+      productionOrders,
+      salesOrders,
+      inventoryMovements,
     },
-    purchaseOrders,
-    productionOrders,
-    salesOrders,
-    inventoryMovements,
   };
 }
 
@@ -356,6 +441,60 @@ export const erpDb = {
       payload.estimated_monthly_volume = patch.estimatedMonthlyVolume;
     }
     const { error } = await db().from('app_settings').upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
+  },
+
+  async upsertCustomer(c: Customer) {
+    const { error } = await db().from('customers').upsert({
+      id: c.id,
+      name: c.name,
+      phone: c.phone || null,
+      platform: c.platform || 'واتساب',
+      governorate: c.governorate || null,
+      city: c.governorate || null,
+      customer_type: c.customerType || 'retail',
+      notes: c.notes || null,
+    });
+    if (error) throw error;
+  },
+
+  async deleteCustomer(id: string) {
+    const { error } = await db().from('customers').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  async upsertExpense(e: ExpenseRecord) {
+    const { error } = await db().from('expenses').upsert({
+      id: e.id,
+      expense_date: e.expenseDate,
+      title: e.title,
+      category: e.category,
+      is_raw_material_purchase: e.isRawMaterialPurchase,
+      amount: e.amount,
+      payment_method: e.paymentMethod,
+      notes: e.notes || null,
+    });
+    if (error) throw error;
+  },
+
+  async deleteExpense(id: string) {
+    const { error } = await db().from('expenses').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  async upsertPartnerContribution(p: PartnerContribution) {
+    const { error } = await db().from('partner_contributions').upsert({
+      id: p.id,
+      partner_name: p.partnerName,
+      contribution_date: p.contributionDate,
+      amount: p.amount,
+      notes: p.notes || null,
+    });
+    if (error) throw error;
+  },
+
+  async deletePartnerContribution(id: string) {
+    const { error } = await db().from('partner_contributions').delete().eq('id', id);
     if (error) throw error;
   },
 
@@ -435,6 +574,15 @@ export const erpDb = {
       season: m.season,
       status: m.status,
       target_margin_pct: m.targetMarginPct,
+      actual_retail_price: m.actualRetailPrice ?? 0,
+      compare_at_price: m.compareAtPrice ?? 0,
+      quick_fabric_cost: m.quickFabricCost ?? 0,
+      quick_shipping_cost: m.quickShippingCost ?? 0,
+      quick_overlock_cost: m.quickOverlockCost ?? 0,
+      quick_packaging_cost: m.quickPackagingCost ?? 0,
+      quick_sewing_cost: m.quickSewingCost ?? 0,
+      quick_accessories_cost: m.quickAccessoriesCost ?? 0,
+      initial_stock: m.initialStock ?? 0,
       notes: m.notes || null,
     });
     if (mErr) throw mErr;
@@ -619,26 +767,35 @@ export const erpDb = {
 
   async createSalesOrder(payload: {
     orderNumber: string;
+    customerId?: string | null;
     customerName: string;
     channel: SalesOrder['channel'];
+    platform: string;
     discountAmount: number;
     shippingFee: number;
+    paidAmount: number;
+    fulfillmentStatus: string;
     notes?: string;
     items: { variantId: string; quantity: number; unitPrice: number }[];
   }) {
     const client = db();
     const id = newUuid();
     const subtotal = payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const totalAmount = subtotal - payload.discountAmount + payload.shippingFee;
     const { error: sErr } = await client.from('sales_orders').insert({
       id,
       order_number: payload.orderNumber,
+      customer_id: payload.customerId || null,
       customer_name: payload.customerName,
       channel: payload.channel,
+      platform: payload.platform,
+      fulfillment_status: payload.fulfillmentStatus,
       status: 'draft',
       subtotal,
       discount_amount: payload.discountAmount,
       shipping_fee: payload.shippingFee,
-      total_amount: subtotal - payload.discountAmount + payload.shippingFee,
+      total_amount: totalAmount,
+      paid_amount: payload.paidAmount,
       notes: payload.notes || null,
     });
     if (sErr) throw sErr;
@@ -658,6 +815,23 @@ export const erpDb = {
 
   async confirmSalesOrder(saleId: string) {
     const { error } = await db().rpc('confirm_sales_order', { p_sale_id: saleId });
+    if (error) throw error;
+  },
+
+  async recordSalesPayment(saleId: string, amount: number, method = 'تحويل') {
+    const { error } = await db().rpc('record_sales_payment', {
+      p_sale_id: saleId,
+      p_payment_amount: amount,
+      p_payment_method: method,
+    });
+    if (error) throw error;
+  },
+
+  async updateSalesFulfillment(saleId: string, fulfillmentStatus: string) {
+    const { error } = await db()
+      .from('sales_orders')
+      .update({ fulfillment_status: fulfillmentStatus })
+      .eq('id', saleId);
     if (error) throw error;
   },
 };

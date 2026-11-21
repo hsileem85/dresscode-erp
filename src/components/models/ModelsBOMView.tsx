@@ -446,6 +446,34 @@ export const ModelsBOMView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-[#1A1A1E] mb-1">
+                    سعر البيع الفعلي
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={draft.actualRetailPrice ?? 0}
+                    onChange={(e) =>
+                      setDraft({ ...draft, actualRetailPrice: Number(e.target.value) })
+                    }
+                    className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm tabular-nums font-bold text-[#8E6742] focus:outline-none focus:border-[#A67C52]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#1A1A1E] mb-1">
+                    السعر قبل الخصم (اختياري)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={draft.compareAtPrice ?? 0}
+                    onChange={(e) =>
+                      setDraft({ ...draft, compareAtPrice: Number(e.target.value) })
+                    }
+                    className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm tabular-nums focus:outline-none focus:border-[#A67C52]"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-[#1A1A1E] mb-1">
                     ملاحظات الباترون
                   </label>
                   <input
@@ -457,6 +485,57 @@ export const ModelsBOMView: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* Quick Direct Costing (mirrors تكلفة المنتجات sheet — includes خياطة بره properly!) */}
+              {draft.fabrics.length === 0 && draft.laborSteps.length === 0 && (
+                <div className="pt-3 border-t border-[#F0EFEA] space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#7B5836]">
+                      التكلفة المباشرة السريعة (للموديلات الفردية — يشمل خياطة بره تلقائياً)
+                    </span>
+                    <span className="text-xs font-bold text-[#1A1A1E] tabular-nums">
+                      الإجمالي المباشر:{' '}
+                      {formatMoney(
+                        (draft.quickFabricCost || 0) +
+                          (draft.quickShippingCost || 0) +
+                          (draft.quickOverlockCost || 0) +
+                          (draft.quickPackagingCost || 0) +
+                          (draft.quickSewingCost || 0) +
+                          (draft.quickAccessoriesCost || 0),
+                        state.currency
+                      )}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+                    {(
+                      [
+                        ['quickFabricCost', 'القماش'],
+                        ['quickShippingCost', 'الشحن'],
+                        ['quickOverlockCost', 'السرفلة'],
+                        ['quickPackagingCost', 'الباكيدج'],
+                        ['quickSewingCost', 'خياطة بره'],
+                        ['quickAccessoriesCost', 'إكسسوارات'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div key={key}>
+                        <label className="block text-[10px] font-semibold text-[#6E6C66] mb-1">
+                          {label}
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={draft[key] ?? 0}
+                          onChange={(e) =>
+                            setDraft({ ...draft, [key]: Number(e.target.value) })
+                          }
+                          className="w-full rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2 py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 1. Fabrics Section */}

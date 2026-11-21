@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { AlertCircle, X } from 'lucide-react';
+import { AlertCircle, Database, X } from 'lucide-react';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { CostCalculatorView } from './components/calculator/CostCalculatorView';
+import { CustomersView } from './components/customers/CustomersView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { ExcelImportExportView } from './components/excel/ExcelImportExportView';
+import { ExpensesCashboxView } from './components/expenses/ExpensesCashboxView';
 import { OutsourcedLaborView } from './components/labor/OutsourcedLaborView';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
@@ -22,6 +24,7 @@ const ERPShell: React.FC = () => {
     authChecked,
     offlineMode,
     setOfflineMode,
+    migration003Missing,
     syncError,
     clearSyncError,
   } = useERP();
@@ -49,6 +52,19 @@ const ERPShell: React.FC = () => {
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar onOpenMobile={() => setMobileMenuOpen(true)} />
 
+        {migration003Missing && (
+          <div className="mx-4 sm:mx-6 lg:mx-8 mt-4 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-2.5 text-xs font-semibold text-amber-900">
+            <Database className="w-4 h-4 shrink-0 text-amber-700" />
+            <span>
+              لتفعيل سجل المصروفات والخزنة ورأس مال الشركاء على السحابة، نفّذ ملف التحديث{' '}
+              <code className="font-mono bg-amber-100 px-1.5 py-0.5 rounded">
+                003_excel_parity_crm_expenses_pnl.sql
+              </code>{' '}
+              في Supabase SQL Editor.
+            </span>
+          </div>
+        )}
+
         {syncError && (
           <div className="mx-4 sm:mx-6 lg:mx-8 mt-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-center justify-between gap-3 text-xs font-semibold text-red-800">
             <div className="flex items-center gap-2">
@@ -74,6 +90,8 @@ const ERPShell: React.FC = () => {
           {activeTab === 'purchases' && <PurchasesView />}
           {activeTab === 'production' && <ProductionView />}
           {activeTab === 'sales' && <SalesView />}
+          {activeTab === 'customers' && <CustomersView />}
+          {activeTab === 'expenses' && <ExpensesCashboxView />}
           {activeTab === 'excel' && <ExcelImportExportView />}
         </main>
       </div>
