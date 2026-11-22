@@ -24,6 +24,8 @@ const ERPShell: React.FC = () => {
     activeTab,
     user,
     authChecked,
+    passwordRecoveryMode,
+    clearPasswordRecovery,
     migration003Missing,
     syncError,
     clearSyncError,
@@ -38,8 +40,13 @@ const ERPShell: React.FC = () => {
     );
   }
 
-  if (isSupabaseConfigured && !user) {
-    return <LoginScreen />;
+  if (isSupabaseConfigured && (passwordRecoveryMode || !user)) {
+    return (
+      <LoginScreen
+        recoveryMode={passwordRecoveryMode}
+        onRecoveryDone={clearPasswordRecovery}
+      />
+    );
   }
 
   return (

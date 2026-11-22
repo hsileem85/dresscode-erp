@@ -44,6 +44,8 @@ interface ERPContextValue {
   // Cloud / Auth state
   user: User | null;
   authChecked: boolean;
+  passwordRecoveryMode: boolean;
+  clearPasswordRecovery: () => void;
   offlineMode: boolean;
   setOfflineMode: (v: boolean) => void;
   cloudConnected: boolean;
@@ -239,10 +241,20 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState<boolean>(!isSupabaseConfigured);
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState<boolean>(() =>
+    typeof window !== 'undefined' && window.location.hash.includes('type=recovery')
+  );
   const [offlineMode, setOfflineMode] = useState<boolean>(!isSupabaseConfigured);
   const [migration003Missing, setMigration003Missing] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  const clearPasswordRecovery = useCallback(() => {
+    setPasswordRecoveryMode(false);
+    if (typeof window !== 'undefined' && window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
 
   const cloudConnected = Boolean(isSupabaseConfigured && user && !offlineMode);
 
@@ -283,7 +295,10 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecoveryMode(true);
+      }
       setUser(session?.user ?? null);
       setAuthChecked(true);
       if (session?.user) {
@@ -986,6 +1001,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openModelInBOM,
         user,
         authChecked,
+        passwordRecoveryMode,
+        clearPasswordRecovery,
         offlineMode,
         setOfflineMode,
         cloudConnected,
