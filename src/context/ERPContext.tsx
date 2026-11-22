@@ -98,6 +98,7 @@ interface ERPContextValue {
   duplicateModel: (id: string) => void;
   importModels: (models: ProductModel[]) => void;
   addModelVariant: (variant: Omit<ModelVariant, 'id'>) => Promise<void>;
+  updateModelVariant: (variant: ModelVariant) => Promise<void>;
 
   // Overhead
   setMonthlyVolume: (volume: number) => void;
@@ -662,6 +663,29 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  const updateModelVariant = async (variant: ModelVariant) => {
+    const existing = state.models
+      .flatMap((m) => m.variants)
+      .find((v) => v.id === variant.id);
+    const qtyDelta = existing ? variant.finishedGoodsQty - existing.finishedGoodsQty : 0;
+
+    if (cloudConnected) {
+      await runCloud(() => erpDb.updateVariant(variant, qtyDelta));
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      models: prev.models.map((m) =>
+        m.id === variant.modelId
+          ? {
+              ...m,
+              variants: m.variants.map((v) => (v.id === variant.id ? variant : v)),
+            }
+          : m
+      ),
+    }));
+  };
+
   // Overhead
   const setMonthlyVolume = (volume: number) => {
     const safe = Math.max(1, volume);
@@ -1039,6 +1063,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         duplicateModel,
         importModels,
         addModelVariant,
+        updateModelVariant,
         setMonthlyVolume,
         saveOverheadItem,
         deleteOverheadItem,

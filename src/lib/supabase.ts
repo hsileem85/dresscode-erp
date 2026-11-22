@@ -718,8 +718,9 @@ export const erpDb = {
   },
 
   async createVariant(v: Omit<ModelVariant, 'id'>) {
+    const id = newUuid();
     const { error } = await db().from('model_variants').insert({
-      id: newUuid(),
+      id,
       model_id: v.modelId,
       variant_sku: v.variantSku,
       color: v.color,
@@ -730,6 +731,45 @@ export const erpDb = {
       reorder_level: v.reorderLevel,
     });
     if (error) throw error;
+
+    if (v.finishedGoodsQty > 0) {
+      await db().from('inventory_movements').insert({
+        item_type: 'finished_good',
+        variant_id: id,
+        movement_type: 'adjustment',
+        qty_delta: v.finishedGoodsQty,
+        unit_cost: v.avgUnitCogs,
+        reference_type: 'manual',
+        notes: `رصيد افتتاحي منتج تام (${v.variantSku})`,
+      });
+    }
+  },
+
+  async updateVariant(v: ModelVariant, qtyDelta = 0) {
+    const { error } = await db()
+      .from('model_variants')
+      .update({
+        color: v.color,
+        size: v.size,
+        finished_goods_qty: v.finishedGoodsQty,
+        avg_unit_cogs: v.avgUnitCogs,
+        retail_price: v.retailPrice,
+        reorder_level: v.reorderLevel,
+      })
+      .eq('id', v.id);
+    if (error) throw error;
+
+    if (qtyDelta !== 0) {
+      await db().from('inventory_movements').insert({
+        item_type: 'finished_good',
+        variant_id: v.id,
+        movement_type: 'adjustment',
+        qty_delta: qtyDelta,
+        unit_cost: v.avgUnitCogs,
+        reference_type: 'manual',
+        notes: `تعديل رصيد منتج تام (${v.variantSku})`,
+      });
+    }
   },
 
   async upsertOverheadItem(item: OverheadItem) {
