@@ -24,8 +24,6 @@ const ERPShell: React.FC = () => {
     activeTab,
     user,
     authChecked,
-    offlineMode,
-    setOfflineMode,
     migration003Missing,
     syncError,
     clearSyncError,
@@ -40,8 +38,8 @@ const ERPShell: React.FC = () => {
     );
   }
 
-  if (isSupabaseConfigured && !user && !offlineMode) {
-    return <LoginScreen onContinueOffline={() => setOfflineMode(true)} />;
+  if (isSupabaseConfigured && !user) {
+    return <LoginScreen />;
   }
 
   return (
