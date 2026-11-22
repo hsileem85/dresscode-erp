@@ -27,83 +27,109 @@ interface SidebarProps {
   onCloseMobile: () => void;
 }
 
-const NAV_ITEMS: {
+interface NavItem {
   id: NavTab;
   label: string;
   sublabel: string;
   icon: React.FC<{ className?: string }>;
-}[] = [
+}
+
+const NAV_SECTIONS: { title?: string; items: NavItem[] }[] = [
   {
-    id: 'dashboard',
-    label: 'لوحة التحكم والأرباح (P&L)',
-    sublabel: 'الملخص الشهري ونقطة التعادل',
-    icon: LayoutDashboard,
+    items: [
+      {
+        id: 'dashboard',
+        label: 'لوحة التحكم والأرباح (P&L)',
+        sublabel: 'الملخص الشهري ونقطة التعادل',
+        icon: LayoutDashboard,
+      },
+    ],
   },
   {
-    id: 'basicdata',
-    label: 'البيانات الأساسية والتكويد',
-    sublabel: 'الموردين والورش والقوائم المنسدلة',
-    icon: Settings2,
+    title: '١. التأسيس والبيانات الأساسية',
+    items: [
+      {
+        id: 'basicdata',
+        label: 'البيانات الأساسية والتكويد',
+        sublabel: 'الموردين والورش والقوائم المنسدلة',
+        icon: Settings2,
+      },
+      {
+        id: 'materials',
+        label: 'الخامات والكلف',
+        sublabel: 'الأقمشة والإكسسوارات والوحدات',
+        icon: Layers,
+      },
+      {
+        id: 'labor',
+        label: 'التشغيل الخارجي',
+        sublabel: 'الورش ومراحل التصنيع',
+        icon: Hammer,
+      },
+    ],
   },
   {
-    id: 'materials',
-    label: 'الخامات والكلف',
-    sublabel: 'الأقمشة والإكسسوارات والوحدات',
-    icon: Layers,
+    title: '٢. المشتريات والتصميم والتسعير',
+    items: [
+      {
+        id: 'purchases',
+        label: 'المشتريات والمخزن',
+        sublabel: 'أوامر الشراء ومتوسط التكلفة',
+        icon: ShoppingBag,
+      },
+      {
+        id: 'models',
+        label: 'الموديلات والباترون',
+        sublabel: 'بطاقة التكلفة والتسعير الفعلي',
+        icon: Scissors,
+      },
+      {
+        id: 'calculator',
+        label: 'حاسبة التكلفة والتسعير',
+        sublabel: 'المصاريف غير المباشرة والربح',
+        icon: Calculator,
+      },
+    ],
   },
   {
-    id: 'models',
-    label: 'الموديلات والباترون',
-    sublabel: 'بطاقة التكلفة والتسعير الفعلي',
-    icon: Scissors,
+    title: '٣. التصنيع والعملاء والمبيعات',
+    items: [
+      {
+        id: 'production',
+        label: 'أوامر التصنيع والمنتج التام',
+        sublabel: 'صرف الخامات ومخزون المقاسات',
+        icon: Factory,
+      },
+      {
+        id: 'customers',
+        label: 'العملاء (CRM)',
+        sublabel: 'التصنيفات والمحافظات والديون',
+        icon: Users,
+      },
+      {
+        id: 'sales',
+        label: 'الطلبات والمبيعات',
+        sublabel: 'التحصيل والديون وحالة التسليم',
+        icon: Receipt,
+      },
+    ],
   },
   {
-    id: 'labor',
-    label: 'التشغيل الخارجي',
-    sublabel: 'الورش ومراحل التصنيع',
-    icon: Hammer,
-  },
-  {
-    id: 'calculator',
-    label: 'حاسبة التكلفة والتسعير',
-    sublabel: 'المصاريف غير المباشرة والربح',
-    icon: Calculator,
-  },
-  {
-    id: 'purchases',
-    label: 'المشتريات والمخزن',
-    sublabel: 'أوامر الشراء ومتوسط التكلفة',
-    icon: ShoppingBag,
-  },
-  {
-    id: 'production',
-    label: 'أوامر التصنيع والمنتج التام',
-    sublabel: 'صرف الخامات ومخزون المقاسات',
-    icon: Factory,
-  },
-  {
-    id: 'sales',
-    label: 'الطلبات والمبيعات',
-    sublabel: 'التحصيل والديون وحالة التسليم',
-    icon: Receipt,
-  },
-  {
-    id: 'customers',
-    label: 'العملاء (CRM)',
-    sublabel: 'التصنيفات والمحافظات والديون',
-    icon: Users,
-  },
-  {
-    id: 'expenses',
-    label: 'المصروفات والخزنة',
-    sublabel: 'المتاح ورأس مال الشركاء',
-    icon: Wallet,
-  },
-  {
-    id: 'excel',
-    label: 'استيراد وتصدير إكسل',
-    sublabel: 'ملفات .xlsx ونسخ احتياطي',
-    icon: FileSpreadsheet,
+    title: '٤. المالية والأدوات',
+    items: [
+      {
+        id: 'expenses',
+        label: 'المصروفات والخزنة',
+        sublabel: 'المتاح ورأس مال الشركاء',
+        icon: Wallet,
+      },
+      {
+        id: 'excel',
+        label: 'استيراد وتصدير إكسل',
+        sublabel: 'ملفات .xlsx ونسخ احتياطي',
+        icon: FileSpreadsheet,
+      },
+    ],
   },
 ];
 
@@ -172,43 +198,52 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
           </button>
         </div>
 
-        {/* Navigation Links */}
-        <nav className="flex-1 px-3.5 py-4 space-y-1 overflow-y-auto" aria-label="التنقل الرئيسي">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                id={`nav-${item.id}`}
-                type="button"
-                onClick={() => handleSelect(item.id)}
-                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-right transition-all cursor-pointer ${
-                  isActive
-                    ? 'bg-[#A67C52] text-white shadow-sm'
-                    : 'text-[#D6D4CE] hover:bg-white/[0.06] hover:text-white'
-                }`}
-              >
-                <Icon
-                  className={`w-4 h-4 shrink-0 ${
-                    isActive ? 'text-white' : 'text-[#A67C52]'
-                  }`}
-                />
-                <div className="min-w-0">
-                  <div className="text-xs sm:text-sm font-semibold leading-snug truncate">
-                    {item.label}
-                  </div>
-                  <div
-                    className={`text-[10px] truncate mt-0.5 ${
-                      isActive ? 'text-white/85' : 'text-[#8F8D86]'
+        {/* Navigation Links (Operational Sequence) */}
+        <nav className="flex-1 px-3.5 py-3.5 space-y-3 overflow-y-auto" aria-label="التنقل الرئيسي">
+          {NAV_SECTIONS.map((section, sectionIdx) => (
+            <div key={section.title || `sec-${sectionIdx}`} className="space-y-1">
+              {section.title && (
+                <div className="px-3 pt-1 pb-0.5 text-[10px] font-bold tracking-wide text-[#BD956D]/85">
+                  {section.title}
+                </div>
+              )}
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    id={`nav-${item.id}`}
+                    type="button"
+                    onClick={() => handleSelect(item.id)}
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-right transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-[#A67C52] text-white shadow-sm'
+                        : 'text-[#D6D4CE] hover:bg-white/[0.06] hover:text-white'
                     }`}
                   >
-                    {item.sublabel}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+                    <Icon
+                      className={`w-4 h-4 shrink-0 ${
+                        isActive ? 'text-white' : 'text-[#A67C52]'
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-xs sm:text-sm font-semibold leading-snug truncate">
+                        {item.label}
+                      </div>
+                      <div
+                        className={`text-[10px] truncate mt-0.5 ${
+                          isActive ? 'text-white/85' : 'text-[#8F8D86]'
+                        }`}
+                      >
+                        {item.sublabel}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Currency, Auth & Brand Footer */}

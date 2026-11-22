@@ -19,8 +19,8 @@ const QUICK_TABS: {
   icon: React.FC<{ className?: string }>;
 }[] = [
   { id: 'dashboard', label: 'الرئيسية', icon: LayoutDashboard },
-  { id: 'sales', label: 'الطلبات', icon: Receipt },
   { id: 'models', label: 'الموديلات', icon: Scissors },
+  { id: 'sales', label: 'الطلبات', icon: Receipt },
   { id: 'expenses', label: 'الخزنة', icon: Wallet },
 ];
 
