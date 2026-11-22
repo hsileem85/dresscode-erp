@@ -1,0 +1,36 @@
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Run every 3 days at 08:00 UTC to keep the free Supabase PostgreSQL project active
+    - cron: '0 8 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase PostgreSQL via PostgREST
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_PUBLISHABLE_KEY" ]; then
+            echo "Missing SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY repository secrets."
+            exit 1
+          fi
+
+          # Lightweight query against PostgREST + PostgreSQL (returns [] under RLS with zero data exposure)
+          HTTP_STATUS=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/app_settings?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+            -H "Accept: application/json")
+
+          echo "Supabase PostgREST HTTP status: ${HTTP_STATUS}"
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "Unexpected response body:"
+            cat /tmp/resp.txt
+            exit 1
+          fi
+          echo "Keep-alive ping succeeded at $(date -u +"%Y-%m-%dT%H:%M:%SZ")."
