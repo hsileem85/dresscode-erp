@@ -15,6 +15,7 @@ import {
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
+import { useConfirm } from '../common/ConfirmDialog';
 import type {
   ModelFabricItem,
   ModelLaborItem,
@@ -68,6 +69,7 @@ export const ModelsBOMView: React.FC = () => {
     duplicateModel,
     openModelInCalculator,
   } = useERP();
+  const confirmAction = useConfirm();
 
   const activeModel = useMemo(
     () => state.models.find((m) => m.id === selectedModelId) || state.models[0] || null,
@@ -127,9 +129,19 @@ export const ModelsBOMView: React.FC = () => {
     });
   };
 
-  const removeFabricLine = (id: string) => {
+  const removeFabricLine = async (id: string) => {
     if (!draft) return;
-    setDraft({ ...draft, fabrics: draft.fabrics.filter((f) => f.id !== id) });
+    const line = draft.fabrics.find((f) => f.id === id);
+    const fab = state.fabrics.find((f) => f.id === line?.fabricId);
+    const ok = await confirmAction({
+      title: 'تأكيد حذف سطر القماش',
+      message: `هل أنت متأكد من حذف القماش «${fab?.name || 'هذا السطر'}» من بطاقة الموديل؟`,
+      confirmLabel: 'نعم، احذف السطر',
+    });
+    if (!ok) return;
+    setDraft((prev) =>
+      prev ? { ...prev, fabrics: prev.fabrics.filter((f) => f.id !== id) } : prev
+    );
   };
 
   // Trim lines (prefer non-auto trims when adding manually)
@@ -168,9 +180,22 @@ export const ModelsBOMView: React.FC = () => {
     });
   };
 
-  const removeTrimLine = (id: string) => {
+  const removeTrimLine = async (id: string) => {
     if (!draft) return;
-    setDraft({ ...draft, trims: draft.trims.filter((t) => t.id !== id) });
+    const line = draft.trims.find((t) => t.id === id);
+    const trim = state.trims.find((t) => t.id === line?.trimId);
+    const ok = await confirmAction({
+      title: 'تأكيد حذف الكلفة / الإكسسوار',
+      message: `هل أنت متأكد من حذف «${trim?.name || 'هذا البند'}» من بطاقة الموديل؟`,
+      detail: trim?.autoIncludeInBom
+        ? 'هذا البند مفعّل كـ «تلقائي» — عند حذف التخصيص سيعود تلقائياً للاحتساب بالكمية الافتراضية.'
+        : undefined,
+      confirmLabel: 'نعم، احذف السطر',
+    });
+    if (!ok) return;
+    setDraft((prev) =>
+      prev ? { ...prev, trims: prev.trims.filter((t) => t.id !== id) } : prev
+    );
   };
 
   // Labor lines
@@ -209,12 +234,18 @@ export const ModelsBOMView: React.FC = () => {
     });
   };
 
-  const removeLaborLine = (id: string) => {
+  const removeLaborLine = async (id: string) => {
     if (!draft) return;
-    setDraft({
-      ...draft,
-      laborSteps: draft.laborSteps.filter((l) => l.id !== id),
+    const step = draft.laborSteps.find((l) => l.id === id);
+    const ok = await confirmAction({
+      title: 'تأكيد حذف مرحلة التشغيل',
+      message: `هل أنت متأكد من حذف مرحلة «${step?.name || 'هذه المرحلة'}» من بطاقة الموديل؟`,
+      confirmLabel: 'نعم، احذف المرحلة',
     });
+    if (!ok) return;
+    setDraft((prev) =>
+      prev ? { ...prev, laborSteps: prev.laborSteps.filter((l) => l.id !== id) } : prev
+    );
   };
 
   const liveCost = useMemo(() => {

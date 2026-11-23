@@ -253,8 +253,11 @@ export const ExcelImportExportView: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                resetToSeedData();
-                setStatusMessage('تمت استعادة البيانات الافتراضية لـ DressCode.');
+                void resetToSeedData().then((confirmed) => {
+                  if (confirmed) {
+                    setStatusMessage('تمت استعادة البيانات الافتراضية لـ DressCode.');
+                  }
+                });
               }}
               title="استعادة البيانات الافتراضية"
               className="p-2 rounded-xl border border-[#E5E3DD] text-[#6E6C66] hover:text-red-600 hover:border-red-200 cursor-pointer"

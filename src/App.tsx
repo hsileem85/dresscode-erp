@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, Database, X } from 'lucide-react';
 import { LoginScreen } from './components/auth/LoginScreen';
+import { ConfirmProvider } from './components/common/ConfirmDialog';
 import { BasicDataView } from './components/basicdata/BasicDataView';
 import { CostCalculatorView } from './components/calculator/CostCalculatorView';
 import { CustomersView } from './components/customers/CustomersView';
@@ -111,9 +112,11 @@ const ERPShell: React.FC = () => {
 
 export function App() {
   return (
-    <ERPProvider>
-      <ERPShell />
-    </ERPProvider>
+    <ConfirmProvider>
+      <ERPProvider>
+        <ERPShell />
+      </ERPProvider>
+    </ConfirmProvider>
   );
 }
 

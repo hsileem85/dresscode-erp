@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle2, PackagePlus, Plus, ShoppingBag, Trash2 } from 'lucide-react';
+import { CheckCircle2, PackagePlus, Plus, ShoppingBag, Trash2, XCircle } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import {
   FABRIC_UNIT_LABELS,
@@ -17,7 +17,7 @@ interface DraftLine {
 }
 
 export const PurchasesView: React.FC = () => {
-  const { state, createAndReceivePO, receivePO } = useERP();
+  const { state, createAndReceivePO, receivePO, cancelPO } = useERP();
   const [modalOpen, setModalOpen] = useState(false);
   const [supplierName, setSupplierName] = useState('');
   const [supplierId, setSupplierId] = useState<string>('');
@@ -25,6 +25,16 @@ export const PurchasesView: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [busyPoId, setBusyPoId] = useState<string | null>(null);
+
+  const runPoAction = async (poId: string, action: () => Promise<void>) => {
+    setBusyPoId(poId);
+    try {
+      await action();
+    } finally {
+      setBusyPoId(null);
+    }
+  };
 
   const openModal = () => {
     const firstSup = state.suppliers[0];
@@ -122,6 +132,9 @@ export const PurchasesView: React.FC = () => {
     .filter((p) => p.status === 'received')
     .reduce((s, p) => s + p.totalAmount, 0);
 
+  const activePoCount = state.purchaseOrders.filter((p) => p.status !== 'cancelled').length;
+  const cancelledPoCount = state.purchaseOrders.filter((p) => p.status === 'cancelled').length;
+
   return (
     <div className="space-y-6">
       {/* KPIs */}
@@ -132,7 +145,8 @@ export const PurchasesView: React.FC = () => {
             {formatMoney(totalPurchases, state.currency)}
           </div>
           <div className="text-xs text-[#6E6C66] mt-1">
-            {state.purchaseOrders.length} أمر شراء مسجل
+            {activePoCount} أمر شراء نشط
+            {cancelledPoCount > 0 ? ` • ${cancelledPoCount} ملغي` : ''}
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
@@ -211,45 +225,79 @@ export const PurchasesView: React.FC = () => {
 
         {/* Mobile Cards */}
         <div className="md:hidden divide-y divide-[#F0EFEA]">
-          {state.purchaseOrders.map((po) => (
-            <div key={po.id} className="p-3.5 space-y-2.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="font-bold text-sm text-[#1A1A1E]">{po.supplierName}</div>
-                  <div className="text-[11px] text-[#6E6C66]">
-                    <span className="font-mono">{po.poNumber}</span> • {po.orderDate}
+          {state.purchaseOrders.map((po) => {
+            const isCancelled = po.status === 'cancelled';
+            const isReceived = po.status === 'received';
+            const isBusy = busyPoId === po.id;
+            return (
+              <div
+                key={po.id}
+                className={`p-3.5 space-y-2.5 ${isCancelled ? 'opacity-65 bg-[#FAF9F7]/60' : ''}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div
+                      className={`font-bold text-sm text-[#1A1A1E] ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : ''
+                      }`}
+                    >
+                      {po.supplierName}
+                    </div>
+                    <div className="text-[11px] text-[#6E6C66]">
+                      <span className="font-mono">{po.poNumber}</span> • {po.orderDate}
+                    </div>
                   </div>
-                </div>
-                <span
-                  className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
-                    po.status === 'received'
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'bg-[#F6EFE7] text-[#8E6742]'
-                  }`}
-                >
-                  {po.status === 'received' ? 'مستلم' : 'قيد التوريد'}
-                </span>
-              </div>
-              <div className="text-xs text-[#4B4A46] bg-[#FAF9F7] rounded-xl p-2.5">
-                {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-extrabold text-[#1A1A1E] tabular-nums">
-                  {formatMoney(po.totalAmount, state.currency)}
-                </span>
-                {po.status !== 'received' && (
-                  <button
-                    type="button"
-                    onClick={() => void receivePO(po.id)}
-                    className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer"
+                  <span
+                    className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
+                      isReceived
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : isCancelled
+                        ? 'bg-red-50 text-red-700'
+                        : 'bg-[#F6EFE7] text-[#8E6742]'
+                    }`}
                   >
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
-                    استلام بالمخزن
-                  </button>
-                )}
+                    {isReceived ? 'مستلم' : isCancelled ? 'ملغي' : 'قيد التوريد'}
+                  </span>
+                </div>
+                <div className="text-xs text-[#4B4A46] bg-[#FAF9F7] rounded-xl p-2.5">
+                  {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    className={`text-sm font-extrabold tabular-nums ${
+                      isCancelled ? 'line-through text-[#6E6C66]' : 'text-[#1A1A1E]'
+                    }`}
+                  >
+                    {formatMoney(po.totalAmount, state.currency)}
+                  </span>
+                  {!isCancelled && (
+                    <div className="flex items-center gap-1.5">
+                      {!isReceived && (
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
+                          className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
+                          استلام بالمخزن
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runPoAction(po.id, () => cancelPO(po.id))}
+                        className="inline-flex items-center gap-1 text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        إلغاء الأمر
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {state.purchaseOrders.length === 0 && (
             <div className="p-8 text-center text-xs text-[#6E6C66]">
               لا توجد أوامر شراء مسجلة بعد.
@@ -271,42 +319,90 @@ export const PurchasesView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0EFEA]">
-              {state.purchaseOrders.map((po) => (
-                <tr key={po.id} className="hover:bg-[#FAF9F7]">
-                  <td className="py-3 px-4 font-mono font-bold text-xs">{po.poNumber}</td>
-                  <td className="py-3 px-4 font-semibold text-[#1A1A1E]">{po.supplierName}</td>
-                  <td className="py-3 px-4 text-xs text-[#6E6C66]">{po.orderDate}</td>
-                  <td className="py-3 px-4 text-xs text-[#4B4A46]">
-                    {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
-                  </td>
-                  <td className="py-3 px-4 font-bold tabular-nums">
-                    {formatMoney(po.totalAmount, state.currency)}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                        po.status === 'received'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-[#F6EFE7] text-[#8E6742]'
+              {state.purchaseOrders.map((po) => {
+                const isCancelled = po.status === 'cancelled';
+                const isReceived = po.status === 'received';
+                const isBusy = busyPoId === po.id;
+                return (
+                  <tr
+                    key={po.id}
+                    className={`hover:bg-[#FAF9F7] ${
+                      isCancelled ? 'opacity-65 bg-[#FAF9F7]/50' : ''
+                    }`}
+                  >
+                    <td
+                      className={`py-3 px-4 font-mono font-bold text-xs ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : ''
                       }`}
                     >
-                      {po.status === 'received' ? 'تم الاستلام بالمخزن' : 'قيد التوريد'}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    {po.status !== 'received' && (
-                      <button
-                        type="button"
-                        onClick={() => void receivePO(po.id)}
-                        className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg hover:bg-[#2E2E35] cursor-pointer"
+                      {po.poNumber}
+                    </td>
+                    <td
+                      className={`py-3 px-4 font-semibold ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : 'text-[#1A1A1E]'
+                      }`}
+                    >
+                      {po.supplierName}
+                    </td>
+                    <td className="py-3 px-4 text-xs text-[#6E6C66]">{po.orderDate}</td>
+                    <td className="py-3 px-4 text-xs text-[#4B4A46]">
+                      {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
+                    </td>
+                    <td
+                      className={`py-3 px-4 font-bold tabular-nums ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : ''
+                      }`}
+                    >
+                      {formatMoney(po.totalAmount, state.currency)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                          isReceived
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : isCancelled
+                            ? 'bg-red-50 text-red-700'
+                            : 'bg-[#F6EFE7] text-[#8E6742]'
+                        }`}
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
-                        استلام بالمخزن
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                        {isReceived
+                          ? 'تم الاستلام بالمخزن'
+                          : isCancelled
+                          ? 'ملغي'
+                          : 'قيد التوريد'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      {!isCancelled ? (
+                        <div className="flex items-center gap-1.5">
+                          {!isReceived && (
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
+                              className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg hover:bg-[#2E2E35] cursor-pointer disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
+                              استلام بالمخزن
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runPoAction(po.id, () => cancelPO(po.id))}
+                            className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            إلغاء
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-[#9C9990]">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {state.purchaseOrders.length === 0 && (
                 <tr>
                   <td colSpan={7} className="py-10 text-center text-xs text-[#6E6C66]">

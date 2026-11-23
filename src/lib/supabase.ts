@@ -848,6 +848,32 @@ export const erpDb = {
     if (error) throw error;
   },
 
+  async cancelPurchaseOrder(poId: string, currentStatus?: PurchaseOrder['status']) {
+    const { error } = await db().rpc('cancel_purchase_order', { p_po_id: poId });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('cancel_purchase_order');
+
+    if (missingFn) {
+      if (currentStatus !== 'received') {
+        const { error: updErr } = await db()
+          .from('purchase_orders')
+          .update({ status: 'cancelled' })
+          .eq('id', poId);
+        if (updErr) throw updErr;
+        return;
+      }
+      throw new Error(
+        'لإلغاء أمر شراء تم استلامه بالفعل وخصم كمياته من المخزون، يرجى تشغيل ملف التحديث 008_cancel_purchase_order.sql في Supabase SQL Editor أولاً.'
+      );
+    }
+
+    throw error;
+  },
+
   async createProductionOrder(payload: {
     batchNumber: string;
     modelId: string;

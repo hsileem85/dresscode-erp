@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
+import { useConfirm } from '../components/common/ConfirmDialog';
 import { SEED_DATA } from '../data/seedData';
 import {
   computePaymentStatus,
@@ -10,6 +11,7 @@ import {
   supabase,
 } from '../lib/supabase';
 import { DEFAULT_LOOKUPS } from '../data/defaultLookups';
+import { formatMoney } from '../utils/calculations';
 import type {
   CurrencyCode,
   Customer,
@@ -123,6 +125,7 @@ interface ERPContextValue {
     }[];
   }) => Promise<void>;
   receivePO: (poId: string) => Promise<void>;
+  cancelPO: (poId: string) => Promise<void>;
 
   createProductionBatch: (payload: {
     batchNumber: string;
@@ -168,7 +171,7 @@ interface ERPContextValue {
 
   // Data management
   importFullJSON: (data: ERPState) => void;
-  resetToSeedData: () => void;
+  resetToSeedData: () => Promise<boolean>;
   lastSavedAt: string;
 }
 
@@ -248,6 +251,7 @@ function loadLocalState(): ERPState {
 }
 
 export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const confirmAction = useConfirm();
   const [state, setState] = useState<ERPState>(loadLocalState);
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [selectedModelId, setSelectedModelId] = useState<string | null>(
@@ -402,11 +406,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteSupplier = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      suppliers: prev.suppliers.filter((s) => s.id !== id),
-    }));
-    void runCloud(() => erpDb.deleteSupplier(id));
+    const target = state.suppliers.find((s) => s.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف المورد',
+        message: `هل أنت متأكد من حذف المورد «${target?.name || 'هذا المورد'}»؟`,
+        detail: 'لا يمكن التراجع عن الحذف بعد التنفيذ.',
+        confirmLabel: 'نعم، احذف المورد',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        suppliers: prev.suppliers.filter((s) => s.id !== id),
+      }));
+      void runCloud(() => erpDb.deleteSupplier(id));
+    })();
   };
 
   const saveWorkshop = (workshop: Workshop) => {
@@ -423,11 +437,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteWorkshop = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      workshops: prev.workshops.filter((w) => w.id !== id),
-    }));
-    void runCloud(() => erpDb.deleteWorkshop(id));
+    const target = state.workshops.find((w) => w.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف الورشة',
+        message: `هل أنت متأكد من حذف الورشة «${target?.name || 'هذه الورشة'}»؟`,
+        detail: 'لا يمكن التراجع عن الحذف بعد التنفيذ.',
+        confirmLabel: 'نعم، احذف الورشة',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        workshops: prev.workshops.filter((w) => w.id !== id),
+      }));
+      void runCloud(() => erpDb.deleteWorkshop(id));
+    })();
   };
 
   const addLookupItem = (groupKey: LookupGroupKey, label: string) => {
@@ -453,13 +477,22 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteLookupItem = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      lookups: prev.lookups.filter((l) => l.id !== id),
-    }));
-    if (cloudConnected) {
-      void erpDb.deleteLookup(id).catch(() => {});
-    }
+    const target = state.lookups.find((l) => l.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف القيمة',
+        message: `هل أنت متأكد من حذف «${target?.label || 'هذه القيمة'}» من القائمة المنسدلة؟`,
+        confirmLabel: 'نعم، احذف',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        lookups: prev.lookups.filter((l) => l.id !== id),
+      }));
+      if (cloudConnected) {
+        void erpDb.deleteLookup(id).catch(() => {});
+      }
+    })();
   };
 
   // Customers CRM
@@ -477,11 +510,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteCustomer = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      customers: prev.customers.filter((c) => c.id !== id),
-    }));
-    void runCloud(() => erpDb.deleteCustomer(id));
+    const target = state.customers.find((c) => c.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف العميل',
+        message: `هل أنت متأكد من حذف العميل «${target?.name || 'هذا العميل'}»؟`,
+        detail: 'لا يمكن التراجع عن الحذف بعد التنفيذ.',
+        confirmLabel: 'نعم، احذف العميل',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        customers: prev.customers.filter((c) => c.id !== id),
+      }));
+      void runCloud(() => erpDb.deleteCustomer(id));
+    })();
   };
 
   // Expenses & Partner Capital
@@ -499,11 +542,26 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteExpense = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      expenses: prev.expenses.filter((e) => e.id !== id),
-    }));
-    void runCloud(() => erpDb.deleteExpense(id));
+    const target = state.expenses.find((e) => e.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف المصروف',
+        message: target
+          ? `هل أنت متأكد من حذف المصروف «${target.title}» بقيمة ${formatMoney(
+              target.amount,
+              state.currency
+            )}؟`
+          : 'هل أنت متأكد من حذف هذا المصروف؟',
+        detail: 'سيؤثر الحذف مباشرة على رصيد الخزنة وتقرير الأرباح والخسائر.',
+        confirmLabel: 'نعم، احذف المصروف',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        expenses: prev.expenses.filter((e) => e.id !== id),
+      }));
+      void runCloud(() => erpDb.deleteExpense(id));
+    })();
   };
 
   const savePartnerContribution = (contrib: PartnerContribution) => {
@@ -520,11 +578,26 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deletePartnerContribution = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      partnerContributions: prev.partnerContributions.filter((p) => p.id !== id),
-    }));
-    void runCloud(() => erpDb.deletePartnerContribution(id));
+    const target = state.partnerContributions.find((p) => p.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف مساهمة رأس المال',
+        message: target
+          ? `هل أنت متأكد من حذف مساهمة «${target.partnerName}» بقيمة ${formatMoney(
+              target.amount,
+              state.currency
+            )}؟`
+          : 'هل أنت متأكد من حذف هذه المساهمة؟',
+        detail: 'سيتم خصم هذا المبلغ من إجمالي رأس مال الشركاء ورصيد الخزنة.',
+        confirmLabel: 'نعم، احذف المساهمة',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        partnerContributions: prev.partnerContributions.filter((p) => p.id !== id),
+      }));
+      void runCloud(() => erpDb.deletePartnerContribution(id));
+    })();
   };
 
   // Fabrics
@@ -542,11 +615,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteFabric = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      fabrics: prev.fabrics.filter((f) => f.id !== id),
-    }));
-    void runCloud(() => erpDb.deleteFabric(id));
+    const target = state.fabrics.find((f) => f.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف القماش',
+        message: `هل أنت متأكد من حذف القماش «${target?.name || 'هذا القماش'}»؟`,
+        detail: 'لا يمكن التراجع عن الحذف بعد التنفيذ (وقد يمنع الحذف إذا كان مرتبطاً بموديل أو أمر شراء).',
+        confirmLabel: 'نعم، احذف القماش',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        fabrics: prev.fabrics.filter((f) => f.id !== id),
+      }));
+      void runCloud(() => erpDb.deleteFabric(id));
+    })();
   };
 
   const importFabrics = (fabrics: Fabric[]) => {
@@ -571,11 +654,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteTrim = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      trims: prev.trims.filter((t) => t.id !== id),
-    }));
-    void runCloud(() => erpDb.deleteTrim(id));
+    const target = state.trims.find((t) => t.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف الكلفة / الإكسسوار',
+        message: `هل أنت متأكد من حذف «${target?.name || 'هذه الكلفة'}»؟`,
+        detail: 'لا يمكن التراجع عن الحذف بعد التنفيذ.',
+        confirmLabel: 'نعم، احذف الكلفة',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        trims: prev.trims.filter((t) => t.id !== id),
+      }));
+      void runCloud(() => erpDb.deleteTrim(id));
+    })();
   };
 
   const importTrims = (trims: TrimAccessory[]) => {
@@ -600,11 +693,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteOperation = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      operations: prev.operations.filter((o) => o.id !== id),
-    }));
-    void runCloud(() => erpDb.deleteOperation(id));
+    const target = state.operations.find((o) => o.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف مرحلة التشغيل',
+        message: `هل أنت متأكد من حذف مرحلة «${target?.name || 'هذه المرحلة'}» من دليل الورش؟`,
+        detail: 'لا يمكن التراجع عن الحذف بعد التنفيذ.',
+        confirmLabel: 'نعم، احذف المرحلة',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        operations: prev.operations.filter((o) => o.id !== id),
+      }));
+      void runCloud(() => erpDb.deleteOperation(id));
+    })();
   };
 
   const importOperations = (ops: OutsourcedOperation[]) => {
@@ -631,14 +734,26 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteModel = (id: string) => {
-    setState((prev) => {
-      const remaining = prev.models.filter((m) => m.id !== id);
-      if (selectedModelId === id) {
-        setSelectedModelId(remaining[0]?.id ?? null);
-      }
-      return { ...prev, models: remaining };
-    });
-    void runCloud(() => erpDb.deleteModel(id));
+    const target = state.models.find((m) => m.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف الموديل',
+        message: `هل أنت متأكد من حذف الموديل «${target?.name || 'هذا الموديل'}» (${
+          target?.sku || ''
+        }) بالكامل؟`,
+        detail: 'سيتم حذف بطاقة التكلفة (BOM) وجميع بنودها ولا يمكن التراجع عن هذا الإجراء.',
+        confirmLabel: 'نعم، احذف الموديل',
+      });
+      if (!ok) return;
+      setState((prev) => {
+        const remaining = prev.models.filter((m) => m.id !== id);
+        if (selectedModelId === id) {
+          setSelectedModelId(remaining[0]?.id ?? null);
+        }
+        return { ...prev, models: remaining };
+      });
+      void runCloud(() => erpDb.deleteModel(id));
+    })();
   };
 
   const duplicateModel = (id: string) => {
@@ -730,14 +845,24 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteOverheadItem = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      overhead: {
-        ...prev.overhead,
-        items: prev.overhead.items.filter((i) => i.id !== id),
-      },
-    }));
-    void runCloud(() => erpDb.deleteOverheadItem(id));
+    const target = state.overhead.items.find((i) => i.id === id);
+    void (async () => {
+      const ok = await confirmAction({
+        title: 'تأكيد حذف بند المصاريف غير المباشرة',
+        message: `هل أنت متأكد من حذف بند «${target?.name || 'هذا البند'}»؟`,
+        detail: 'سيؤثر الحذف على نصيب القطعة من المصاريف غير المباشرة في كل الموديلات.',
+        confirmLabel: 'نعم، احذف البند',
+      });
+      if (!ok) return;
+      setState((prev) => ({
+        ...prev,
+        overhead: {
+          ...prev.overhead,
+          items: prev.overhead.items.filter((i) => i.id !== id),
+        },
+      }));
+      void runCloud(() => erpDb.deleteOverheadItem(id));
+    })();
   };
 
   // Purchases
@@ -812,7 +937,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     setState((prev) => {
       const po = prev.purchaseOrders.find((p) => p.id === poId);
-      if (!po || po.status === 'received') return prev;
+      if (!po || po.status === 'received' || po.status === 'cancelled') return prev;
       let nextFabrics = prev.fabrics;
       let nextTrims = prev.trims;
       for (const item of po.items) {
@@ -834,6 +959,76 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         trims: nextTrims,
         purchaseOrders: prev.purchaseOrders.map((p) =>
           p.id === poId ? { ...p, status: 'received', receivedAt: new Date().toISOString() } : p
+        ),
+      };
+    });
+  };
+
+  const cancelPO = async (poId: string) => {
+    const po = state.purchaseOrders.find((p) => p.id === poId);
+    if (!po || po.status === 'cancelled') return;
+
+    const isReceived = po.status === 'received';
+    const ok = await confirmAction({
+      title: 'تأكيد إلغاء أمر الشراء',
+      message: `هل أنت متأكد من إلغاء أمر الشراء «${po.poNumber}» (${
+        po.supplierName
+      }) بقيمة ${formatMoney(po.totalAmount, state.currency)}؟`,
+      detail: isReceived
+        ? 'هذا الأمر تم استلامه بالفعل بالمخزن — عند التأكيد سيتم خصم الكميات المستلمة من المخزون وتعديل رصيد المورد تلقائياً. لن يُسمح بالإلغاء إذا كان جزء من الخامات قد استُهلك.'
+        : 'سيتم تحويل حالة أمر الشراء إلى «ملغي» ولن يتم استلامه بالمخزن.',
+      confirmLabel: 'نعم، إلغاء أمر الشراء',
+    });
+    if (!ok) return;
+
+    if (cloudConnected) {
+      await runCloud(() => erpDb.cancelPurchaseOrder(poId, po.status));
+      return;
+    }
+
+    setState((prev) => {
+      const target = prev.purchaseOrders.find((p) => p.id === poId);
+      if (!target || target.status === 'cancelled') return prev;
+
+      let nextFabrics = prev.fabrics;
+      let nextTrims = prev.trims;
+      let nextSuppliers = prev.suppliers;
+
+      if (target.status === 'received') {
+        for (const item of target.items) {
+          if (item.itemType === 'fabric' && item.fabricId) {
+            nextFabrics = nextFabrics.map((f) =>
+              f.id === item.fabricId
+                ? { ...f, stockQty: Math.max(0, f.stockQty - item.quantity) }
+                : f
+            );
+          } else if (item.itemType === 'trim' && item.trimId) {
+            nextTrims = nextTrims.map((t) =>
+              t.id === item.trimId
+                ? {
+                    ...t,
+                    stockQty: Math.max(0, t.stockQty - item.quantity * item.unitsPerPack),
+                  }
+                : t
+            );
+          }
+        }
+        if (target.supplierId) {
+          nextSuppliers = nextSuppliers.map((s) =>
+            s.id === target.supplierId
+              ? { ...s, balancePayable: Math.max(0, s.balancePayable - target.totalAmount) }
+              : s
+          );
+        }
+      }
+
+      return {
+        ...prev,
+        fabrics: nextFabrics,
+        trims: nextTrims,
+        suppliers: nextSuppliers,
+        purchaseOrders: prev.purchaseOrders.map((p) =>
+          p.id === poId ? { ...p, status: 'cancelled' } : p
         ),
       };
     });
@@ -1151,9 +1346,17 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSelectedModelId(data.models[0]?.id ?? null);
   };
 
-  const resetToSeedData = () => {
+  const resetToSeedData = async (): Promise<boolean> => {
+    const ok = await confirmAction({
+      title: 'تأكيد استعادة البيانات الافتراضية',
+      message: 'هل أنت متأكد من مسح البيانات المحلية الحالية واستعادة البيانات الافتراضية؟',
+      detail: 'سيتم استبدال كافة البيانات المعروضة محلياً بالبيانات التجريبية الافتراضية.',
+      confirmLabel: 'نعم، استعد البيانات الافتراضية',
+    });
+    if (!ok) return false;
     setState(SEED_DATA);
     setSelectedModelId(SEED_DATA.models[0]?.id ?? null);
+    return true;
   };
 
   return (
@@ -1212,6 +1415,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteOverheadItem,
         createAndReceivePO,
         receivePO,
+        cancelPO,
         createProductionBatch,
         issueProductionBatch,
         completeProductionBatch,
