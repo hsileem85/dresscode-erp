@@ -1,9 +1,28 @@
 import React, { useMemo, useState } from 'react';
-import { Banknote, Boxes, CheckCircle2, Edit3, Factory, Play, Plus } from 'lucide-react';
+import {
+  Banknote,
+  Boxes,
+  CheckCircle2,
+  Edit3,
+  Factory,
+  Play,
+  Plus,
+  Printer,
+  Trash2,
+} from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
+import { newUuid } from '../../lib/supabase';
 import type { ModelVariant, ProductionOrder } from '../../types/erp';
-import { calculateModelCost, formatMoney } from '../../utils/calculations';
+import {
+  calculateModelCost,
+  FABRIC_UNIT_LABELS,
+  formatMoney,
+} from '../../utils/calculations';
+import {
+  openAndPrintDispatchSlip,
+  type DispatchMaterialLine,
+} from '../../utils/printDispatchSlip';
 import { Modal } from '../common/Modal';
 
 export const ProductionView: React.FC = () => {
@@ -39,6 +58,15 @@ export const ProductionView: React.FC = () => {
   const [completeOrder, setCompleteOrder] = useState<ProductionOrder | null>(null);
   const [deliveryPayAmount, setDeliveryPayAmount] = useState<number>(0);
   const [deliveryPayMethod, setDeliveryPayMethod] = useState('كاش');
+
+  // Material Dispatch Voucher (إذن تسليم خامات للتصنيع) Modal
+  const [dispatchOrder, setDispatchOrder] = useState<ProductionOrder | null>(null);
+  const [dispatchDate, setDispatchDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dispatchReturnDate, setDispatchReturnDate] = useState('');
+  const [dispatchDeliveredBy, setDispatchDeliveredBy] = useState('');
+  const [dispatchMaterials, setDispatchMaterials] = useState<DispatchMaterialLine[]>([]);
+  const [dispatchShowFinancials, setDispatchShowFinancials] = useState(true);
+  const [dispatchInstructions, setDispatchInstructions] = useState('');
 
   // Add / Edit variant form (supports opening finished-goods stock & COGS)
   const [editingVariant, setEditingVariant] = useState<ModelVariant | null>(null);
@@ -271,6 +299,96 @@ export const ProductionView: React.FC = () => {
     setCompleteOrder(null);
   };
 
+  const openDispatchSlipModal = (po: ProductionOrder) => {
+    const model = state.models.find((m) => m.id === po.modelId);
+    const lines: DispatchMaterialLine[] = [];
+
+    if (model) {
+      model.fabrics.forEach((mf) => {
+        const fab = state.fabrics.find((f) => f.id === mf.fabricId);
+        if (!fab) return;
+        const qtyWithWaste =
+          Math.round(mf.consumption * (1 + mf.wastePct / 100) * po.plannedQty * 100) / 100;
+        lines.push({
+          id: newUuid(),
+          kind: 'قماش',
+          name: fab.name,
+          quantity: qtyWithWaste,
+          unit: FABRIC_UNIT_LABELS[fab.unit] || 'متر',
+          notes: `مقصوص لعدد ${po.plannedQty} قطعة (شامل هالك ${mf.wastePct}%)`,
+        });
+      });
+
+      model.trims.forEach((mt) => {
+        const trim = state.trims.find((t) => t.id === mt.trimId);
+        if (!trim) return;
+        const totalQty = Math.round(mt.quantity * po.plannedQty * 100) / 100;
+        lines.push({
+          id: newUuid(),
+          kind: 'كلفة / إكسسوار',
+          name: trim.name,
+          quantity: totalQty,
+          unit: trim.unitLabel || 'قطعة',
+          notes: trim.category || '',
+        });
+      });
+    }
+
+    setDispatchOrder(po);
+    setDispatchDate(new Date().toISOString().slice(0, 10));
+    setDispatchReturnDate('');
+    setDispatchDeliveredBy('');
+    setDispatchMaterials(lines);
+    setDispatchShowFinancials(true);
+    setDispatchInstructions(po.notes || '');
+  };
+
+  const handlePrintDispatchSlip = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dispatchOrder) return;
+    const model = state.models.find((m) => m.id === dispatchOrder.modelId);
+    const ws = state.workshops.find(
+      (w) =>
+        w.id === dispatchOrder.workshopId ||
+        (dispatchOrder.workshopName && w.name === dispatchOrder.workshopName)
+    );
+
+    const variantLines = dispatchOrder.variants.map((pv) => {
+      const v = model?.variants.find((x) => x.id === pv.variantId);
+      return {
+        color: v?.color || '—',
+        size: v?.size || '—',
+        variantSku: v?.variantSku || '—',
+        qty: pv.plannedQty,
+      };
+    });
+
+    const totalLabor = getOrderTotalLabor(dispatchOrder);
+    const paid = dispatchOrder.paidToWorkshop || 0;
+
+    openAndPrintDispatchSlip({
+      voucherNumber: `ISS-${dispatchOrder.batchNumber}`,
+      dispatchDate,
+      expectedReturnDate: dispatchReturnDate || undefined,
+      batchNumber: dispatchOrder.batchNumber,
+      modelName: model?.name || 'موديل',
+      modelSku: model?.sku || '—',
+      workshopName: getOrderWorkshopLabel(dispatchOrder),
+      workshopPhone: ws?.phone || undefined,
+      workshopContact: ws?.contactName || undefined,
+      deliveredBy: dispatchDeliveredBy.trim() || undefined,
+      totalPieces: dispatchOrder.plannedQty,
+      variants: variantLines,
+      materials: dispatchMaterials.filter((m) => m.name.trim() !== ''),
+      showFinancials: dispatchShowFinancials,
+      agreedLaborTotal: totalLabor,
+      paidToWorkshop: paid,
+      remainingWorkshop: Math.max(0, totalLabor - paid),
+      currency: state.currency,
+      instructions: dispatchInstructions,
+    });
+  };
+
   const runAction = async (id: string, fn: () => Promise<void>) => {
     setBusyId(id);
     try {
@@ -465,6 +583,15 @@ export const ProductionView: React.FC = () => {
                       سداد باقي الورشة ({formatMoney(remaining, state.currency)})
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => openDispatchSlipModal(po)}
+                    className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-[#E5E3DD] bg-white hover:bg-[#FAF9F7] text-[#1A1A1E] px-3 py-2 rounded-xl cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-[#A67C52]" />
+                    طباعة إذن تسليم خامات للورشة
+                  </button>
                 </div>
               </div>
             );
@@ -595,6 +722,15 @@ export const ProductionView: React.FC = () => {
                             سداد الباقي
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => openDispatchSlipModal(po)}
+                          title="طباعة إذن تسليم خامات للتصنيع"
+                          className="inline-flex items-center gap-1 text-xs font-semibold border border-[#E5E3DD] bg-white hover:bg-[#FAF9F7] text-[#1A1A1E] px-2.5 py-1.5 rounded-lg cursor-pointer"
+                        >
+                          <Printer className="w-3.5 h-3.5 text-[#A67C52]" />
+                          إذن تسليم
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1214,6 +1350,241 @@ export const ProductionView: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Material Dispatch Voucher (إذن تسليم خامات للتصنيع) Modal */}
+      <Modal
+        open={Boolean(dispatchOrder)}
+        onClose={() => setDispatchOrder(null)}
+        title={`إذن تسليم خامات للتصنيع (ISS-${dispatchOrder?.batchNumber || ''})`}
+        subtitle="راجع الأقمشة والكلف المسلّمة للورشة وأضف أي أزرار أو سحابات أو خيوط إضافية قبل الطباعة"
+        maxWidthClass="max-w-2xl"
+      >
+        {dispatchOrder && (
+          <form onSubmit={handlePrintDispatchSlip} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold mb-1">تاريخ التسليم</label>
+                <input
+                  type="date"
+                  value={dispatchDate}
+                  onChange={(e) => setDispatchDate(e.target.value)}
+                  className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  موعد الاستلام المتوقع (اختياري)
+                </label>
+                <input
+                  type="date"
+                  value={dispatchReturnDate}
+                  onChange={(e) => setDispatchReturnDate(e.target.value)}
+                  className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  المُسلِّم من DressCode (اختياري)
+                </label>
+                <input
+                  type="text"
+                  value={dispatchDeliveredBy}
+                  onChange={(e) => setDispatchDeliveredBy(e.target.value)}
+                  placeholder="اسم المسؤول"
+                  className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Materials & Trims list to hand over */}
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[#1A1A1E]">
+                  الخامات والأقمشة والكلف المسلّمة للورشة ({dispatchMaterials.length}):
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {state.trims.length > 0 && (
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        const trim = state.trims.find((t) => t.id === e.target.value);
+                        if (trim) {
+                          setDispatchMaterials((prev) => [
+                            ...prev,
+                            {
+                              id: newUuid(),
+                              kind: 'كلفة / إكسسوار',
+                              name: trim.name,
+                              quantity: dispatchOrder.plannedQty,
+                              unit: trim.unitLabel || 'قطعة',
+                              notes: trim.category || '',
+                            },
+                          ]);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2 py-1 text-[11px] font-semibold"
+                    >
+                      <option value="">+ إضافة كلفة من المخزن...</option>
+                      {state.trims.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.unitLabel})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDispatchMaterials((prev) => [
+                        ...prev,
+                        {
+                          id: newUuid(),
+                          kind: 'خامة إضافية',
+                          name: '',
+                          quantity: 1,
+                          unit: 'قطعة',
+                          notes: '',
+                        },
+                      ])
+                    }
+                    className="inline-flex items-center gap-1 text-[11px] font-bold bg-[#F6EFE7] hover:bg-[#EDE0D1] text-[#8E6742] px-2.5 py-1 rounded-lg cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    صنف يدوي (أزرار / خيوط...)
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto pl-0.5">
+                {dispatchMaterials.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-12 gap-2 items-center bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl p-2"
+                  >
+                    <select
+                      value={item.kind}
+                      onChange={(e) =>
+                        setDispatchMaterials((prev) =>
+                          prev.map((row, i) =>
+                            i === idx
+                              ? {
+                                  ...row,
+                                  kind: e.target.value as DispatchMaterialLine['kind'],
+                                }
+                              : row
+                          )
+                        )
+                      }
+                      className="col-span-4 sm:col-span-3 rounded-lg border border-[#E5E3DD] bg-white px-1.5 py-1.5 text-[11px]"
+                    >
+                      <option value="قماش">قماش</option>
+                      <option value="كلفة / إكسسوار">كلفة / إكسسوار</option>
+                      <option value="خامة إضافية">خامة إضافية</option>
+                    </select>
+                    <input
+                      type="text"
+                      required
+                      value={item.name}
+                      onChange={(e) =>
+                        setDispatchMaterials((prev) =>
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, name: e.target.value } : row
+                          )
+                        )
+                      }
+                      placeholder="مثال: أزرار لؤلؤ / بكرة خيط أسود"
+                      className="col-span-8 sm:col-span-4 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.05"
+                      value={item.quantity}
+                      onChange={(e) =>
+                        setDispatchMaterials((prev) =>
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, quantity: Number(e.target.value) } : row
+                          )
+                        )
+                      }
+                      className="col-span-5 sm:col-span-2 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs tabular-nums text-center"
+                    />
+                    <input
+                      type="text"
+                      value={item.unit}
+                      onChange={(e) =>
+                        setDispatchMaterials((prev) =>
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, unit: e.target.value } : row
+                          )
+                        )
+                      }
+                      placeholder="متر / قطعة"
+                      className="col-span-5 sm:col-span-2 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs text-center"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDispatchMaterials((prev) => prev.filter((_, i) => i !== idx))
+                      }
+                      aria-label="حذف السطر"
+                      className="col-span-2 sm:col-span-1 flex justify-center p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                {dispatchMaterials.length === 0 && (
+                  <div className="text-xs text-[#6E6C66] bg-[#FAF9F7] rounded-xl p-3 text-center">
+                    لا توجد خامات مضافة بعد — اضغط «+ صنف يدوي» أو اختر كلفة من المخزن لإدراجها في الإذن.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold mb-1">
+                تعليمات وملاحظات التشغيل للورشة
+              </label>
+              <textarea
+                rows={2}
+                value={dispatchInstructions}
+                onChange={(e) => setDispatchInstructions(e.target.value)}
+                placeholder="مثال: الالتزام بعينة التقفيل المعتمدة، تركيب تيكت DressCode والمقاس في منتصف الياقة..."
+                className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer bg-[#FAF9F7] px-3 py-2 rounded-xl border border-[#E5E3DD]">
+              <input
+                type="checkbox"
+                checked={dispatchShowFinancials}
+                onChange={(e) => setDispatchShowFinancials(e.target.checked)}
+                className="accent-[#A67C52]"
+              />
+              <span>إظهار ملخص أجر الورشة والمدفوع تحت الحساب والمتبقي في الإذن المطبوع</span>
+            </label>
+
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+              <button
+                type="button"
+                onClick={() => setDispatchOrder(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+              >
+                إغلاق
+              </button>
+              <button
+                type="submit"
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs font-bold cursor-pointer"
+              >
+                <Printer className="w-4 h-4 text-[#BD956D]" />
+                <span>طباعة إذن التسليم / حفظ PDF</span>
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   );
