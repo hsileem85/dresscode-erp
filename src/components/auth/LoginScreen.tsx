@@ -64,6 +64,23 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
   };
 
+  const formatAuthError = (msg: string): string => {
+    const lower = msg.toLowerCase();
+    if (lower.includes('rate limit') || lower.includes('too many requests')) {
+      return 'تم تجاوز حد إرسال رسائل البريد الإلكتروني مؤقتاً (خطة Supabase المجانية تسمح برسالتين فقط في الساعة). انتظر قليلاً أو أنشئ/فعّل الحساب مباشرة من لوحة تحكم Supabase.';
+    }
+    if (lower.includes('already registered') || lower.includes('user already exists')) {
+      return 'هذا البريد الإلكتروني مسجّل بالفعل. انتقل إلى «تسجيل الدخول» أو استخدم «نسيت كلمة المرور؟».';
+    }
+    if (lower.includes('invalid login credentials')) {
+      return 'البريد الإلكتروني أو كلمة المرور غير صحيحة. إذا لم تنشئ حساباً بعد، اختر "إنشاء حساب جديد".';
+    }
+    if (lower.includes('email not confirmed')) {
+      return 'يرجى تفعيل حسابك أولاً من خلال الضغط على رابط التفعيل المرسل إلى بريدك الإلكتروني (أو تفعيله من لوحة Supabase).';
+    }
+    return msg;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
@@ -76,7 +93,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           redirectTo: window.location.origin,
         });
         if (resetError) {
-          setError(resetError.message);
+          setError(formatAuthError(resetError.message));
           return;
         }
         setInfo(
@@ -98,7 +115,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           },
         });
         if (signUpError) {
-          setError(signUpError.message);
+          setError(formatAuthError(signUpError.message));
           return;
         }
         if (data.session) {
@@ -114,17 +131,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           password,
         });
         if (authError) {
-          if (authError.message === 'Invalid login credentials') {
-            setError(
-              'البريد الإلكتروني أو كلمة المرور غير صحيحة. إذا لم تنشئ حساباً بعد، اختر "إنشاء حساب جديد".'
-            );
-          } else if (authError.message.toLowerCase().includes('email not confirmed')) {
-            setError(
-              'يرجى تفعيل حسابك أولاً من خلال الضغط على رابط التفعيل المرسل إلى بريدك الإلكتروني.'
-            );
-          } else {
-            setError(authError.message);
-          }
+          setError(formatAuthError(authError.message));
         }
       }
     } catch {
