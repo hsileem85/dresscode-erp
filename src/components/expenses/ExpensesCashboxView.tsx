@@ -1,9 +1,23 @@
 import React, { useMemo, useState } from 'react';
-import { Banknote, Landmark, Plus, Trash2, Wallet } from 'lucide-react';
+import {
+  Banknote,
+  Boxes,
+  Landmark,
+  Layers,
+  PieChart,
+  Plus,
+  Receipt,
+  Trash2,
+  Wallet,
+} from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
-import { formatMoney } from '../../utils/calculations';
+import {
+  calculateModelCost,
+  formatMoney,
+  getTrimUnitCost,
+} from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
 export const ExpensesCashboxView: React.FC = () => {
@@ -53,15 +67,94 @@ export const ExpensesCashboxView: React.FC = () => {
 
   // Cashbox math (المتاح بالخزنة)
   const totalPartnerCapital = state.partnerContributions.reduce((s, p) => s + p.amount, 0);
-  const totalCollections = state.salesOrders
-    .filter((o) => o.status !== 'cancelled')
-    .reduce((s, o) => s + o.paidAmount, 0);
+  const activeSalesOrders = state.salesOrders.filter((o) => o.status !== 'cancelled');
+  const totalCollections = activeSalesOrders.reduce((s, o) => s + o.paidAmount, 0);
   const totalExpensesOutflow = state.expenses.reduce((s, e) => s + e.amount, 0);
   const operatingExpensesOnly = state.expenses
     .filter((e) => !e.isRawMaterialPurchase)
     .reduce((s, e) => s + e.amount, 0);
   const rawMaterialOutflow = totalExpensesOutflow - operatingExpensesOnly;
   const availableCash = totalPartnerCapital + totalCollections - totalExpensesOutflow;
+
+  // Live Project Assets Valuation (إجمالي قيمة أصول المشروع الآن)
+  const projectAssets = useMemo(() => {
+    const fabricsValue = state.fabrics.reduce(
+      (sum, f) => sum + Math.max(f.stockQty || 0, 0) * (f.pricePerUnit || 0),
+      0
+    );
+    const trimsValue = state.trims.reduce(
+      (sum, t) => sum + Math.max(t.stockQty || 0, 0) * getTrimUnitCost(t),
+      0
+    );
+    const rawMaterialsValue = fabricsValue + trimsValue;
+    const rawItemsInStock =
+      state.fabrics.filter((f) => f.stockQty > 0).length +
+      state.trims.filter((t) => t.stockQty > 0).length;
+
+    let finishedGoodsCostValue = 0;
+    let finishedGoodsRetailValue = 0;
+    let finishedGoodsPieces = 0;
+
+    state.models.forEach((m) => {
+      const fallbackCost = calculateModelCost(
+        m,
+        state.fabrics,
+        state.trims,
+        state.overhead
+      ).totalUnitCost;
+      m.variants.forEach((v) => {
+        const qty = Math.max(v.finishedGoodsQty || 0, 0);
+        if (qty <= 0) return;
+        const unitCost = v.avgUnitCogs > 0 ? v.avgUnitCogs : fallbackCost;
+        finishedGoodsPieces += qty;
+        finishedGoodsCostValue += qty * unitCost;
+        finishedGoodsRetailValue += qty * (v.retailPrice || 0);
+      });
+    });
+
+    const customerReceivables = activeSalesOrders.reduce(
+      (sum, o) => sum + Math.max(o.remainingDebt || 0, 0),
+      0
+    );
+    const openDebtOrdersCount = activeSalesOrders.filter((o) => o.remainingDebt > 0).length;
+
+    const totalAssets =
+      availableCash + rawMaterialsValue + finishedGoodsCostValue + customerReceivables;
+    const positiveSum =
+      Math.max(availableCash, 0) +
+      rawMaterialsValue +
+      finishedGoodsCostValue +
+      customerReceivables;
+
+    const pct = (val: number) =>
+      positiveSum > 0 ? Math.max(0, (Math.max(val, 0) / positiveSum) * 100) : 0;
+
+    return {
+      fabricsValue,
+      trimsValue,
+      rawMaterialsValue,
+      rawItemsInStock,
+      finishedGoodsCostValue,
+      finishedGoodsRetailValue,
+      finishedGoodsPieces,
+      customerReceivables,
+      openDebtOrdersCount,
+      totalAssets,
+      netVsCapital: totalAssets - totalPartnerCapital,
+      cashPct: pct(availableCash),
+      rawPct: pct(rawMaterialsValue),
+      fgPct: pct(finishedGoodsCostValue),
+      debtPct: pct(customerReceivables),
+    };
+  }, [
+    state.fabrics,
+    state.trims,
+    state.models,
+    state.overhead,
+    activeSalesOrders,
+    availableCash,
+    totalPartnerCapital,
+  ]);
 
   // Group partner totals
   const partnerTotals = useMemo(() => {
@@ -156,6 +249,152 @@ export const ExpensesCashboxView: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Total Project Valuation / Assets Breakdown Card */}
+      <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 border-b border-[#F0EFEA]">
+          <div className="flex items-center gap-2.5">
+            <span className="w-9 h-9 rounded-xl bg-[#F6EFE7] text-[#A67C52] flex items-center justify-center shrink-0">
+              <PieChart className="w-4 h-4" />
+            </span>
+            <div>
+              <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
+                إجمالي قيمة المشروع الآن (صافي الأصول)
+              </h2>
+              <p className="text-[11px] text-[#6E6C66]">
+                الكاش بالخزنة + قيمة مخزون الخامات + قيمة المنتج التام (بالتكلفة) + ديون العملاء
+              </p>
+            </div>
+          </div>
+
+          <div className="sm:text-left bg-[#FBF8F4] border border-[#E6D5C3] rounded-xl px-3.5 py-2">
+            <div className="text-[10px] font-semibold text-[#7B5836]">إجمالي الأصول الحالية</div>
+            <div className="text-xl sm:text-2xl font-extrabold text-[#1A1A1E] tabular-nums">
+              {formatMoney(projectAssets.totalAssets, state.currency)}
+            </div>
+            {totalPartnerCapital > 0 && (
+              <div
+                className={`text-[11px] font-bold tabular-nums ${
+                  projectAssets.netVsCapital >= 0 ? 'text-emerald-700' : 'text-amber-700'
+                }`}
+              >
+                {projectAssets.netVsCapital >= 0 ? 'فائض عن رأس المال: +' : 'الفرق عن رأس المال: '}
+                {formatMoney(projectAssets.netVsCapital, state.currency)}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 4 Asset Buckets */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] text-[#6E6C66]">
+              <span className="font-semibold">كاش بالخزنة</span>
+              <Wallet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            </div>
+            <div className="text-sm sm:text-base font-extrabold text-[#1A1A1E] tabular-nums mt-1">
+              {formatMoney(availableCash, state.currency)}
+            </div>
+            <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 tabular-nums">
+              {projectAssets.cashPct.toFixed(1)}% من الأصول
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] text-[#6E6C66]">
+              <span className="font-semibold">مخزون خامات وكلف</span>
+              <Layers className="w-3.5 h-3.5 text-[#A67C52] shrink-0" />
+            </div>
+            <div className="text-sm sm:text-base font-extrabold text-[#1A1A1E] tabular-nums mt-1">
+              {formatMoney(projectAssets.rawMaterialsValue, state.currency)}
+            </div>
+            <div className="text-[10px] text-[#6E6C66] mt-0.5 tabular-nums">
+              {projectAssets.rawItemsInStock} صنف ({projectAssets.rawPct.toFixed(1)}%)
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] text-[#6E6C66]">
+              <span className="font-semibold">منتج تام (بالتكلفة)</span>
+              <Boxes className="w-3.5 h-3.5 text-[#1A1A1E] shrink-0" />
+            </div>
+            <div className="text-sm sm:text-base font-extrabold text-[#8E6742] tabular-nums mt-1">
+              {formatMoney(projectAssets.finishedGoodsCostValue, state.currency)}
+            </div>
+            <div className="text-[10px] text-[#6E6C66] mt-0.5 tabular-nums truncate">
+              {projectAssets.finishedGoodsPieces} قطعة • بيع:{' '}
+              {formatMoney(projectAssets.finishedGoodsRetailValue, state.currency)}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] text-[#6E6C66]">
+              <span className="font-semibold">ديون عند العملاء</span>
+              <Receipt className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            </div>
+            <div className="text-sm sm:text-base font-extrabold text-[#1A1A1E] tabular-nums mt-1">
+              {formatMoney(projectAssets.customerReceivables, state.currency)}
+            </div>
+            <div className="text-[10px] text-[#6E6C66] mt-0.5 tabular-nums">
+              {projectAssets.openDebtOrdersCount} طلب متبقي ({projectAssets.debtPct.toFixed(1)}%)
+            </div>
+          </div>
+        </div>
+
+        {/* Visual Distribution Bar */}
+        {projectAssets.totalAssets > 0 && (
+          <div className="space-y-1.5">
+            <div className="h-2.5 w-full rounded-full bg-[#F0EFEA] overflow-hidden flex">
+              {projectAssets.cashPct > 0 && (
+                <div
+                  className="bg-emerald-600 h-full"
+                  style={{ width: `${projectAssets.cashPct}%` }}
+                  title={`كاش: ${projectAssets.cashPct.toFixed(1)}%`}
+                />
+              )}
+              {projectAssets.rawPct > 0 && (
+                <div
+                  className="bg-[#A67C52] h-full"
+                  style={{ width: `${projectAssets.rawPct}%` }}
+                  title={`خامات وكلف: ${projectAssets.rawPct.toFixed(1)}%`}
+                />
+              )}
+              {projectAssets.fgPct > 0 && (
+                <div
+                  className="bg-[#1A1A1E] h-full"
+                  style={{ width: `${projectAssets.fgPct}%` }}
+                  title={`منتج تام: ${projectAssets.fgPct.toFixed(1)}%`}
+                />
+              )}
+              {projectAssets.debtPct > 0 && (
+                <div
+                  className="bg-amber-500 h-full"
+                  style={{ width: `${projectAssets.debtPct}%` }}
+                  title={`ديون عملاء: ${projectAssets.debtPct.toFixed(1)}%`}
+                />
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-[#6E6C66]">
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                كاش ({projectAssets.cashPct.toFixed(0)}%)
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-[#A67C52]" />
+                خامات وكلف ({projectAssets.rawPct.toFixed(0)}%)
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-[#1A1A1E]" />
+                منتج تام ({projectAssets.fgPct.toFixed(0)}%)
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                ديون عملاء ({projectAssets.debtPct.toFixed(0)}%)
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Partner Capital Section */}
