@@ -153,11 +153,18 @@ export const MaterialsView: React.FC = () => {
 
   const handleTrimUnitPreset = (unit: TrimPurchaseUnit) => {
     const defaultQty =
-      unit === 'dozen' ? 12 : unit === 'piece' ? 1 : trimForm.unitsPerPack || 100;
+      unit === 'dozen'
+        ? 12
+        : unit === 'piece'
+        ? 1
+        : unit === 'weight'
+        ? 1000
+        : trimForm.unitsPerPack || 100;
     setTrimForm((prev) => ({
       ...prev,
       purchaseUnit: unit,
       unitsPerPack: defaultQty,
+      unitLabel: unit === 'weight' ? 'جرام' : prev.unitLabel === 'جرام' ? 'قطعة' : prev.unitLabel,
     }));
   };
 

@@ -99,7 +99,8 @@ export type TrimPurchaseUnit =
   | 'roll'
   | 'pack'
   | 'box'
-  | 'cone';
+  | 'cone'
+  | 'weight';
 
 export interface TrimAccessory {
   id: string;

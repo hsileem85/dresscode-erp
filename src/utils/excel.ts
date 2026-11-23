@@ -300,8 +300,17 @@ export function mapRowsToTrims(
       else if (rawUnit.includes('بكر') || rawUnit.includes('cone')) purchaseUnit = 'cone';
       else if (rawUnit.includes('علب') || rawUnit.includes('box')) purchaseUnit = 'box';
       else if (rawUnit.includes('قطع') || rawUnit.includes('piece')) purchaseUnit = 'piece';
+      else if (
+        rawUnit.includes('وزن') ||
+        rawUnit.includes('كيلو') ||
+        rawUnit.includes('كجم') ||
+        rawUnit.includes('جرام') ||
+        rawUnit.includes('weight') ||
+        rawUnit.includes('kg')
+      )
+        purchaseUnit = 'weight';
 
-      const defaultUnits = purchaseUnit === 'dozen' ? 12 : 1;
+      const defaultUnits = purchaseUnit === 'dozen' ? 12 : purchaseUnit === 'weight' ? 1000 : 1;
       const unitsPerPack = Math.max(1, parseNum(row[mapping.unitsPerPack], defaultUnits));
 
       return {

@@ -161,6 +161,7 @@ export const PURCHASE_UNIT_LABELS: Record<TrimPurchaseUnit, string> = {
   pack: 'عبوة / باكت',
   box: 'علبة / كرتونة',
   cone: 'بكرة / كون',
+  weight: 'بالوزن',
 };
 
 export const FABRIC_UNIT_LABELS = {
