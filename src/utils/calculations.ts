@@ -39,6 +39,43 @@ export function getFabricLineCost(
   return effectiveQty * fabric.pricePerUnit;
 }
 
+export interface EffectiveModelTrimItem extends ModelTrimItem {
+  isAuto: boolean;
+}
+
+/**
+ * Returns trims flagged as `autoIncludeInBom` that are not already explicitly
+ * listed (or overridden) in `model.trims`.
+ */
+export function getAutoIncludedTrimsForModel(
+  model: ProductModel,
+  trims: TrimAccessory[]
+): EffectiveModelTrimItem[] {
+  const explicitIds = new Set(model.trims.map((item) => item.trimId));
+  return trims
+    .filter((t) => Boolean(t.autoIncludeInBom) && !explicitIds.has(t.id))
+    .map((t) => ({
+      id: `auto-${t.id}`,
+      trimId: t.id,
+      quantity: t.defaultQtyPerPiece != null ? Number(t.defaultQtyPerPiece) : 1,
+      isAuto: true,
+    }));
+}
+
+/**
+ * Combines explicit model trims with auto-included standard trims (no double counting).
+ */
+export function getEffectiveModelTrims(
+  model: ProductModel,
+  trims: TrimAccessory[]
+): EffectiveModelTrimItem[] {
+  const explicit: EffectiveModelTrimItem[] = model.trims.map((item) => ({
+    ...item,
+    isAuto: false,
+  }));
+  return [...explicit, ...getAutoIncludedTrimsForModel(model, trims)];
+}
+
 export function getTrimLineCost(
   item: ModelTrimItem,
   trims: TrimAccessory[]
@@ -89,13 +126,16 @@ export function calculateModelCost(
   pricingMode: 'markup' | 'margin' = 'markup'
 ): ModelCostBreakdown {
   const hasBomMaterials = model.fabrics.length > 0 || model.trims.length > 0;
-  const fabricCost = hasBomMaterials
-    ? model.fabrics.reduce((sum, item) => sum + getFabricLineCost(item, fabrics), 0)
-    : (Number(model.quickFabricCost) || 0) + (Number(model.quickShippingCost) || 0);
+  const useQuickMaterials = !hasBomMaterials && getQuickDirectMaterialCost(model) > 0;
 
-  const trimCost = hasBomMaterials
-    ? model.trims.reduce((sum, item) => sum + getTrimLineCost(item, trims), 0)
-    : (Number(model.quickPackagingCost) || 0) + (Number(model.quickAccessoriesCost) || 0);
+  const fabricCost = useQuickMaterials
+    ? (Number(model.quickFabricCost) || 0) + (Number(model.quickShippingCost) || 0)
+    : model.fabrics.reduce((sum, item) => sum + getFabricLineCost(item, fabrics), 0);
+
+  const effectiveTrims = getEffectiveModelTrims(model, trims);
+  const trimCost = useQuickMaterials
+    ? (Number(model.quickPackagingCost) || 0) + (Number(model.quickAccessoriesCost) || 0)
+    : effectiveTrims.reduce((sum, item) => sum + getTrimLineCost(item, trims), 0);
 
   const directMaterialCost = fabricCost + trimCost;
 

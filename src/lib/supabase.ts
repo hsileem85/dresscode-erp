@@ -220,6 +220,9 @@ export async function fetchFullERPState(): Promise<{
     unitLabel: r.unit_label || 'قطعة',
     stockQty: Number(r.stock_qty) || 0,
     reorderLevel: Number(r.reorder_level) || 50,
+    autoIncludeInBom: Boolean(r.auto_include_in_bom),
+    defaultQtyPerPiece:
+      r.default_qty_per_piece != null ? Number(r.default_qty_per_piece) : 1,
     notes: r.notes || '',
   }));
 
@@ -613,6 +616,8 @@ export const erpDb = {
       unit_label: t.unitLabel,
       stock_qty: t.stockQty ?? 0,
       reorder_level: t.reorderLevel ?? 50,
+      auto_include_in_bom: Boolean(t.autoIncludeInBom),
+      default_qty_per_piece: Math.max(0, Number(t.defaultQtyPerPiece ?? 1) || 0),
       notes: t.notes || null,
     });
     if (error) throw error;

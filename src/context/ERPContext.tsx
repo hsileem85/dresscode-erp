@@ -200,6 +200,8 @@ function loadLocalState(): ERPState {
         ...t,
         stockQty: t.stockQty ?? 0,
         reorderLevel: t.reorderLevel ?? 50,
+        autoIncludeInBom: Boolean(t.autoIncludeInBom),
+        defaultQtyPerPiece: t.defaultQtyPerPiece ?? 1,
       })),
       operations: Array.isArray(parsed.operations)
         ? parsed.operations

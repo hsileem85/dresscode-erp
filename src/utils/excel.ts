@@ -446,6 +446,8 @@ export function exportFullERPToExcel(state: ERPState): void {
     'عدد الوحدات بالعبوة': t.unitsPerPack,
     'تكلفة القطعة الواحدة': Number(getTrimUnitCost(t).toFixed(2)),
     'مسمى القطعة': t.unitLabel,
+    'تلقائي في التكلفة': t.autoIncludeInBom ? 'نعم' : 'لا',
+    'الكمية التلقائية للقطعة': t.autoIncludeInBom ? t.defaultQtyPerPiece ?? 1 : 0,
   }));
   const wsTrims = XLSX.utils.json_to_sheet(trimsData);
   XLSX.utils.book_append_sheet(wb, wsTrims, 'الكلف والإكسسوارات');

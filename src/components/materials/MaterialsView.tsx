@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Check,
   Edit3,
   Layers,
   PackageOpen,
   Plus,
   Search,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
@@ -50,6 +52,8 @@ const EMPTY_TRIM: Omit<TrimAccessory, 'id'> = {
   unitLabel: 'قطعة',
   stockQty: 0,
   reorderLevel: 50,
+  autoIncludeInBom: false,
+  defaultQtyPerPiece: 1,
   notes: '',
 };
 
@@ -89,6 +93,15 @@ export const MaterialsView: React.FC = () => {
         t.category.toLowerCase().includes(q)
     );
   }, [state.trims, query]);
+
+  const autoBomTrimsSummary = useMemo(() => {
+    const autoList = state.trims.filter((t) => Boolean(t.autoIncludeInBom));
+    const totalPerPiece = autoList.reduce(
+      (sum, t) => sum + getTrimUnitCost(t) * (t.defaultQtyPerPiece ?? 1),
+      0
+    );
+    return { count: autoList.length, totalPerPiece };
+  }, [state.trims]);
 
   const openNewFabric = () => {
     setEditingFabricId(null);
@@ -146,9 +159,19 @@ export const MaterialsView: React.FC = () => {
       unitLabel: trim.unitLabel,
       stockQty: trim.stockQty ?? 0,
       reorderLevel: trim.reorderLevel ?? 50,
+      autoIncludeInBom: Boolean(trim.autoIncludeInBom),
+      defaultQtyPerPiece: trim.defaultQtyPerPiece ?? 1,
       notes: trim.notes || '',
     });
     setTrimModalOpen(true);
+  };
+
+  const toggleTrimAutoBom = (trim: TrimAccessory) => {
+    saveTrim({
+      ...trim,
+      autoIncludeInBom: !trim.autoIncludeInBom,
+      defaultQtyPerPiece: trim.defaultQtyPerPiece ?? 1,
+    });
   };
 
   const handleTrimUnitPreset = (unit: TrimPurchaseUnit) => {
@@ -176,6 +199,8 @@ export const MaterialsView: React.FC = () => {
       ...trimForm,
       packPrice: Number(trimForm.packPrice) || 0,
       unitsPerPack: Math.max(1, Number(trimForm.unitsPerPack) || 1),
+      autoIncludeInBom: Boolean(trimForm.autoIncludeInBom),
+      defaultQtyPerPiece: Math.max(0, Number(trimForm.defaultQtyPerPiece ?? 1) || 0),
     });
     setTrimModalOpen(false);
   };
@@ -393,18 +418,59 @@ export const MaterialsView: React.FC = () => {
 
       {/* Trims & Accessories List (Mobile Cards + Desktop Table) */}
       {subTab === 'trims' && (
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
+        <div className="space-y-3">
+          {/* Auto-BOM Info & Summary Bar */}
+          <div className="rounded-2xl border border-[#E6D5C3] bg-[#FBF8F4] px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs text-[#7B5836]">
+              <Sparkles className="w-4 h-4 text-[#A67C52] shrink-0" />
+              <span>
+                فعّل علامة <strong>«تلقائي في التكلفة»</strong> لأي كلفة أو تغليف أساسي (مثل الشنط والكروت وخيط التيكت) ليُحتسب تلقائياً في تكلفة كل موديل دون إضافته يدوياً.
+              </span>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-xl bg-white border border-[#E6D5C3] px-3 py-1.5 text-xs shrink-0">
+              <span className="text-[#6E6C66]">التلقائي حالياً:</span>
+              <span className="font-bold text-[#1A1A1E]">
+                {autoBomTrimsSummary.count} {autoBomTrimsSummary.count === 1 ? 'بند' : 'بنود'}
+              </span>
+              <span className="text-[#E5E3DD]">|</span>
+              <span className="font-bold text-[#8E6742] tabular-nums">
+                {formatMoney(autoBomTrimsSummary.totalPerPiece, state.currency)} / قطعة
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
           <div className="md:hidden divide-y divide-[#F0EFEA]">
             {filteredTrims.map((trim) => {
               const unitCost = getTrimUnitCost(trim);
+              const isAuto = Boolean(trim.autoIncludeInBom);
+              const autoQty = trim.defaultQtyPerPiece ?? 1;
               return (
                 <div key={trim.id} className="p-3.5 space-y-2.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-bold text-sm text-[#1A1A1E]">{trim.name}</div>
-                      <span className="inline-flex mt-1 px-2 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-[11px] font-medium">
-                        {trim.category}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        <span className="inline-flex px-2 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-[11px] font-medium">
+                          {trim.category}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleTrimAutoBom(trim)}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
+                            isAuto
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-[#F3F2EE] text-[#6E6C66] border border-[#E5E3DD]'
+                          }`}
+                        >
+                          {isAuto && <Check className="w-3 h-3" />}
+                          <span>
+                            {isAuto
+                              ? `تلقائي في التكلفة (×${formatNumber(autoQty, 2)})`
+                              : 'يدوي بالبطاقة'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
@@ -459,12 +525,15 @@ export const MaterialsView: React.FC = () => {
                   <th className="py-3.5 px-4 font-semibold">شراء بالعبوة</th>
                   <th className="py-3.5 px-4 font-semibold">تحويل الوحدة</th>
                   <th className="py-3.5 px-4 font-semibold">تكلفة الوحدة الواحدة</th>
+                  <th className="py-3.5 px-4 font-semibold">الاحتساب في التكلفة (BOM)</th>
                   <th className="py-3.5 px-4 font-semibold">إجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#F0EFEA]">
                 {filteredTrims.map((trim) => {
                   const unitCost = getTrimUnitCost(trim);
+                  const isAuto = Boolean(trim.autoIncludeInBom);
+                  const autoQty = trim.defaultQtyPerPiece ?? 1;
                   return (
                     <tr key={trim.id} className="hover:bg-[#FAF9F7]/80 transition-colors">
                       <td className="py-3.5 px-4">
@@ -497,6 +566,29 @@ export const MaterialsView: React.FC = () => {
                         </span>
                       </td>
                       <td className="py-3.5 px-4">
+                        <button
+                          type="button"
+                          onClick={() => toggleTrimAutoBom(trim)}
+                          title={
+                            isAuto
+                              ? 'اضغط لتحويله إلى إضافة يدوية'
+                              : 'اضغط لتفعيل الاحتساب التلقائي في كل الموديلات'
+                          }
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+                            isAuto
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                              : 'bg-[#F3F2EE] text-[#6E6C66] border border-[#E5E3DD] hover:bg-[#EAE8E2] hover:text-[#1A1A1E]'
+                          }`}
+                        >
+                          {isAuto && <Check className="w-3.5 h-3.5" />}
+                          <span>
+                            {isAuto
+                              ? `تلقائي (×${formatNumber(autoQty, 2)})`
+                              : 'يدوي'}
+                          </span>
+                        </button>
+                      </td>
+                      <td className="py-3.5 px-4">
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
@@ -521,13 +613,14 @@ export const MaterialsView: React.FC = () => {
                 })}
                 {filteredTrims.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-[#6E6C66]">
+                    <td colSpan={8} className="py-10 text-center text-[#6E6C66]">
                       لا توجد كلف أو إكسسوارات مطابقة للبحث.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       )}
@@ -825,6 +918,59 @@ export const MaterialsView: React.FC = () => {
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
               />
             </div>
+          </div>
+
+          {/* Auto-Include in BOM Flag */}
+          <div className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] p-3.5 space-y-3">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={Boolean(trimForm.autoIncludeInBom)}
+                onChange={(e) =>
+                  setTrimForm({
+                    ...trimForm,
+                    autoIncludeInBom: e.target.checked,
+                    defaultQtyPerPiece: trimForm.defaultQtyPerPiece ?? 1,
+                  })
+                }
+                className="mt-0.5 h-4 w-4 rounded border-[#D4CFC7] accent-[#A67C52] cursor-pointer"
+              />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-[#1A1A1E] flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#A67C52]" />
+                  <span>احتساب تلقائي في تكلفة كل الموديلات (BOM)</span>
+                </div>
+                <p className="text-[11px] text-[#6E6C66] mt-0.5">
+                  عند التفعيل، يُحتسب هذا البند تلقائياً ضمن تكلفة كل موديل (مثل الشنط والكروت وخيط التيكت) دون الحاجة لإضافته يدوياً في كل بطاقة.
+                </p>
+              </div>
+            </label>
+
+            {trimForm.autoIncludeInBom && (
+              <div className="pt-2.5 border-t border-[#E5E3DD] flex flex-wrap items-center justify-between gap-2.5">
+                <label className="text-xs font-semibold text-[#1A1A1E]">
+                  الكمية التلقائية لكل قطعة ({trimForm.unitLabel || 'قطعة'}):
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.5"
+                    value={trimForm.defaultQtyPerPiece ?? 1}
+                    onChange={(e) =>
+                      setTrimForm({
+                        ...trimForm,
+                        defaultQtyPerPiece: Number(e.target.value),
+                      })
+                    }
+                    className="w-24 rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs font-bold text-center tabular-nums focus:outline-none focus:border-[#A67C52]"
+                  />
+                  <span className="text-xs font-bold text-emerald-700 tabular-nums">
+                    = {formatMoney(previewTrimUnitCost * (Number(trimForm.defaultQtyPerPiece) || 0), state.currency)} / قطعة
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Live Unit Conversion Banner */}

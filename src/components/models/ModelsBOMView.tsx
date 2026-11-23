@@ -8,6 +8,8 @@ import {
   Plus,
   Save,
   Scissors,
+  SlidersHorizontal,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
@@ -25,6 +27,7 @@ import {
   FABRIC_UNIT_LABELS,
   formatMoney,
   formatNumber,
+  getAutoIncludedTrimsForModel,
   getFabricLineCost,
   getLaborStepUnitCost,
   getTrimLineCost,
@@ -129,15 +132,30 @@ export const ModelsBOMView: React.FC = () => {
     setDraft({ ...draft, fabrics: draft.fabrics.filter((f) => f.id !== id) });
   };
 
-  // Trim lines
+  // Trim lines (prefer non-auto trims when adding manually)
   const addTrimLine = () => {
     if (!draft) return;
-    const defaultTrim = state.trims[0];
+    const usedIds = new Set(draft.trims.map((t) => t.trimId));
+    const defaultTrim =
+      state.trims.find((t) => !t.autoIncludeInBom && !usedIds.has(t.id)) ||
+      state.trims.find((t) => !t.autoIncludeInBom) ||
+      state.trims[0];
     if (!defaultTrim) return;
     const item: ModelTrimItem = {
       id: newUuid(),
       trimId: defaultTrim.id,
-      quantity: 1,
+      quantity: defaultTrim.defaultQtyPerPiece ?? 1,
+    };
+    setDraft({ ...draft, trims: [...draft.trims, item] });
+  };
+
+  const overrideAutoTrim = (trimId: string, defaultQty: number) => {
+    if (!draft) return;
+    if (draft.trims.some((t) => t.trimId === trimId)) return;
+    const item: ModelTrimItem = {
+      id: newUuid(),
+      trimId,
+      quantity: defaultQty,
     };
     setDraft({ ...draft, trims: [...draft.trims, item] });
   };
@@ -671,97 +689,181 @@ export const ModelsBOMView: React.FC = () => {
             </div>
 
             {/* 2. Trims & Accessories Section */}
-            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <PackageOpen className="w-4 h-4 text-[#A67C52]" />
-                  <h3 className="text-sm font-bold text-[#1A1A1E]">
-                    2. الكلف والإكسسوارات والتغليف
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={addTrimLine}
-                  disabled={state.trims.length === 0}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#8E6742] bg-[#F6EFE7] hover:bg-[#EDE0D1] px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  إضافة كلفة / إكسسوار
-                </button>
-              </div>
-
-              <div className="space-y-2.5">
-                {draft.trims.map((line) => {
-                  const trim = state.trims.find((t) => t.id === line.trimId);
-                  const lineCost = getTrimLineCost(line, state.trims);
-                  return (
-                    <div
-                      key={line.id}
-                      className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl p-3"
-                    >
-                      <div className="sm:col-span-6">
-                        <label className="block text-[10px] text-[#6E6C66] mb-1">
-                          الكلفة / الإكسسوار
-                        </label>
-                        <select
-                          value={line.trimId}
-                          onChange={(e) =>
-                            updateTrimLine(line.id, { trimId: e.target.value })
-                          }
-                          className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
-                        >
-                          {state.trims.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name} ({formatMoney(getTrimUnitCost(t), state.currency)}/
-                              {t.unitLabel})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-3">
-                        <label className="block text-[10px] text-[#6E6C66] mb-1">
-                          الكمية للقطعة ({trim?.unitLabel || 'وحدة'})
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          value={line.quantity}
-                          onChange={(e) =>
-                            updateTrimLine(line.id, { quantity: Number(e.target.value) })
-                          }
-                          className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2 text-left sm:text-center">
-                        <div className="text-[10px] text-[#6E6C66]">الإجمالي</div>
-                        <div className="text-xs font-bold text-[#8E6742] tabular-nums mt-0.5">
-                          {formatMoney(lineCost, state.currency)}
-                        </div>
-                      </div>
-
-                      <div className="sm:col-span-1 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => removeTrimLine(line.id)}
-                          aria-label="حذف سطر الكلفة"
-                          className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+            {(() => {
+              const autoTrims = getAutoIncludedTrimsForModel(draft, state.trims);
+              const autoTrimsTotal = autoTrims.reduce(
+                (sum, item) => sum + getTrimLineCost(item, state.trims),
+                0
+              );
+              return (
+                <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <PackageOpen className="w-4 h-4 text-[#A67C52]" />
+                      <h3 className="text-sm font-bold text-[#1A1A1E]">
+                        2. الكلف والإكسسوارات والتغليف
+                      </h3>
                     </div>
-                  );
-                })}
-                {draft.trims.length === 0 && (
-                  <p className="text-xs text-[#6E6C66] py-3 text-center bg-[#FAF9F7] rounded-xl">
-                    لم يتم إضافة كلف أو تيكت DressCode لهذا الموديل بعد.
-                  </p>
-                )}
-              </div>
-            </div>
+                    <button
+                      type="button"
+                      onClick={addTrimLine}
+                      disabled={state.trims.length === 0}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#8E6742] bg-[#F6EFE7] hover:bg-[#EDE0D1] px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      إضافة كلفة / إكسسوار
+                    </button>
+                  </div>
+
+                  {/* Auto-Included Standard Trims Card */}
+                  {autoTrims.length > 0 && (
+                    <div className="rounded-xl border border-[#E6D5C3] bg-[#FBF8F4] p-3.5 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#7B5836]">
+                          <Sparkles className="w-3.5 h-3.5 text-[#A67C52] shrink-0" />
+                          <span>
+                            بنود أساسية مُحتسبة تلقائياً في التكلفة ({autoTrims.length}{' '}
+                            {autoTrims.length === 1 ? 'بند' : 'بنود'})
+                          </span>
+                        </div>
+                        <span className="text-xs font-extrabold text-[#8E6742] bg-white border border-[#E6D5C3] px-2.5 py-0.5 rounded-full tabular-nums">
+                          +{formatMoney(autoTrimsTotal, state.currency)} / قطعة
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {autoTrims.map((item) => {
+                          const trim = state.trims.find((t) => t.id === item.trimId);
+                          if (!trim) return null;
+                          const lineCost = getTrimLineCost(item, state.trims);
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex items-center justify-between gap-2 bg-white border border-[#EDE3D7] rounded-lg px-3 py-2 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-semibold text-[#1A1A1E] truncate">
+                                  {trim.name}
+                                </div>
+                                <div className="text-[11px] text-[#6E6C66] tabular-nums">
+                                  {formatNumber(item.quantity, 2)} {trim.unitLabel} ×{' '}
+                                  {formatMoney(getTrimUnitCost(trim), state.currency)}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="font-bold text-[#8E6742] tabular-nums">
+                                  {formatMoney(lineCost, state.currency)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => overrideAutoTrim(trim.id, item.quantity)}
+                                  title="تخصيص الكمية أو استثناء هذا البند لهذا الموديل فقط (ضع 0 للاستثناء)"
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-[#6E6C66] bg-[#FAF9F7] border border-[#E5E3DD] hover:border-[#A67C52] hover:text-[#8E6742] transition-colors cursor-pointer"
+                                >
+                                  <SlidersHorizontal className="w-3 h-3" />
+                                  <span>تخصيص</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <p className="text-[11px] text-[#7B5836]/80">
+                        تُدار البنود التلقائية من شاشة <strong>الخامات والكلف ← الكلف والإكسسوارات</strong>. اضغط «تخصيص» إذا أردت تعديل كمية بند أو استثناءه (بوضع 0) لهذا الموديل فقط.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Explicit / Model-Specific Trims */}
+                  <div className="space-y-2.5">
+                    {draft.trims.map((line) => {
+                      const trim = state.trims.find((t) => t.id === line.trimId);
+                      const lineCost = getTrimLineCost(line, state.trims);
+                      const isOverridingAuto = Boolean(trim?.autoIncludeInBom);
+                      return (
+                        <div
+                          key={line.id}
+                          className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl p-3"
+                        >
+                          <div className="sm:col-span-6">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <label className="block text-[10px] text-[#6E6C66]">
+                                الكلفة / الإكسسوار
+                              </label>
+                              {isOverridingAuto && (
+                                <span className="text-[10px] font-semibold text-[#8E6742] bg-[#F6EFE7] px-1.5 py-0.5 rounded">
+                                  {line.quantity === 0
+                                    ? 'مُستثنى لهذا الموديل'
+                                    : 'تخصيص لبند تلقائي'}
+                                </span>
+                              )}
+                            </div>
+                            <select
+                              value={line.trimId}
+                              onChange={(e) =>
+                                updateTrimLine(line.id, { trimId: e.target.value })
+                              }
+                              className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#A67C52]"
+                            >
+                              {state.trims.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name}
+                                  {t.autoIncludeInBom ? ' (تلقائي)' : ''} (
+                                  {formatMoney(getTrimUnitCost(t), state.currency)}/
+                                  {t.unitLabel})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-3">
+                            <label className="block text-[10px] text-[#6E6C66] mb-1">
+                              الكمية للقطعة ({trim?.unitLabel || 'وحدة'})
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              value={line.quantity}
+                              onChange={(e) =>
+                                updateTrimLine(line.id, { quantity: Number(e.target.value) })
+                              }
+                              className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2 text-left sm:text-center">
+                            <div className="text-[10px] text-[#6E6C66]">الإجمالي</div>
+                            <div className="text-xs font-bold text-[#8E6742] tabular-nums mt-0.5">
+                              {formatMoney(lineCost, state.currency)}
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-1 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => removeTrimLine(line.id)}
+                              aria-label="حذف سطر الكلفة"
+                              className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {draft.trims.length === 0 && (
+                      <p className="text-xs text-[#6E6C66] py-3 text-center bg-[#FAF9F7] rounded-xl">
+                        {autoTrims.length > 0
+                          ? 'لا توجد كلف إضافية خاصة بهذا الموديل (مثل الزراير أو السوست) — البنود التلقائية أعلاه مُحتسبة بالفعل.'
+                          : 'لم يتم إضافة كلف أو تيكت DressCode لهذا الموديل بعد.'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* 3. Outsourced Labor Steps Section */}
             <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-3">

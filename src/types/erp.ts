@@ -114,6 +114,8 @@ export interface TrimAccessory {
   unitLabel: string;
   stockQty: number;
   reorderLevel: number;
+  autoIncludeInBom?: boolean;
+  defaultQtyPerPiece?: number;
   notes?: string;
 }
 
