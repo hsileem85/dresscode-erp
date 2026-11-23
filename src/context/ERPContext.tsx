@@ -127,11 +127,26 @@ interface ERPContextValue {
   createProductionBatch: (payload: {
     batchNumber: string;
     modelId: string;
+    workshopId?: string | null;
+    workshopName?: string;
+    agreedLaborTotal?: number;
+    advancePayment?: number;
+    paymentMethod?: string;
     notes?: string;
     variants: { variantId: string; plannedQty: number }[];
   }) => Promise<void>;
   issueProductionBatch: (prodId: string) => Promise<void>;
-  completeProductionBatch: (prodId: string) => Promise<void>;
+  completeProductionBatch: (
+    prodId: string,
+    finalPaymentAmount?: number,
+    paymentMethod?: string
+  ) => Promise<void>;
+  recordWorkshopPayment: (
+    prodId: string,
+    amount: number,
+    paymentMethod?: string,
+    notes?: string
+  ) => Promise<void>;
 
   createSalesOrder: (payload: {
     orderNumber: string;
@@ -831,6 +846,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     const plannedQty = payload.variants.reduce((s, v) => s + v.plannedQty, 0);
+    const advance = Math.max(0, Number(payload.advancePayment) || 0);
+    const today = new Date().toISOString().slice(0, 10);
     setState((prev) => ({
       ...prev,
       productionOrders: [
@@ -838,6 +855,10 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: newUuid(),
           batchNumber: payload.batchNumber,
           modelId: payload.modelId,
+          workshopId: payload.workshopId || null,
+          workshopName: payload.workshopName || '',
+          agreedLaborTotal: Math.max(0, Number(payload.agreedLaborTotal) || 0),
+          paidToWorkshop: advance,
           status: 'planned',
           plannedQty,
           completedQty: 0,
@@ -846,7 +867,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           allocatedOverheadCost: 0,
           actualUnitCogs: 0,
           notes: payload.notes,
-          createdAt: new Date().toISOString().slice(0, 10),
+          createdAt: today,
           variants: payload.variants.map((v) => ({
             id: newUuid(),
             variantId: v.variantId,
@@ -856,6 +877,22 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
         ...prev.productionOrders,
       ],
+      expenses:
+        advance > 0
+          ? [
+              {
+                id: newUuid(),
+                expenseDate: today,
+                title: `دفعة تحت الحساب للورشة — ${payload.workshopName || 'ورشة خارجية'} (${payload.batchNumber})`,
+                category: 'خامات',
+                isRawMaterialPurchase: true,
+                amount: advance,
+                paymentMethod: payload.paymentMethod || 'كاش',
+                notes: `تشغيلة ${payload.batchNumber}`,
+              },
+              ...prev.expenses,
+            ]
+          : prev.expenses,
     }));
   };
 
@@ -872,14 +909,86 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
-  const completeProductionBatch = async (prodId: string) => {
+  const recordWorkshopPayment: ERPContextValue['recordWorkshopPayment'] = async (
+    prodId,
+    amount,
+    paymentMethod = 'كاش',
+    notes
+  ) => {
+    if (amount <= 0) return;
     if (cloudConnected) {
-      await runCloud(() => erpDb.completeProductionOrder(prodId));
+      await runCloud(() => erpDb.recordWorkshopPayment(prodId, amount, paymentMethod, notes));
       return;
     }
+    const today = new Date().toISOString().slice(0, 10);
     setState((prev) => {
       const prod = prev.productionOrders.find((p) => p.id === prodId);
       if (!prod) return prev;
+      const label =
+        notes?.trim() ||
+        `${prod.status === 'completed' ? 'سداد مستحقات الورشة' : 'دفعة تحت الحساب للورشة'} — ${
+          prod.workshopName || 'ورشة خارجية'
+        } (${prod.batchNumber})`;
+      return {
+        ...prev,
+        productionOrders: prev.productionOrders.map((p) =>
+          p.id === prodId ? { ...p, paidToWorkshop: (p.paidToWorkshop || 0) + amount } : p
+        ),
+        workshops:
+          prod.status === 'completed' && prod.workshopId
+            ? prev.workshops.map((w) =>
+                w.id === prod.workshopId
+                  ? { ...w, balancePayable: Math.max(0, w.balancePayable - amount) }
+                  : w
+              )
+            : prev.workshops,
+        expenses: [
+          {
+            id: newUuid(),
+            expenseDate: today,
+            title: label,
+            category: 'خامات',
+            isRawMaterialPurchase: true,
+            amount,
+            paymentMethod,
+            notes: `تشغيلة ${prod.batchNumber}`,
+          },
+          ...prev.expenses,
+        ],
+      };
+    });
+  };
+
+  const completeProductionBatch: ERPContextValue['completeProductionBatch'] = async (
+    prodId,
+    finalPaymentAmount = 0,
+    paymentMethod = 'كاش'
+  ) => {
+    if (cloudConnected) {
+      await runCloud(async () => {
+        await erpDb.completeProductionOrder(prodId);
+        if (finalPaymentAmount && finalPaymentAmount > 0) {
+          const prod = state.productionOrders.find((p) => p.id === prodId);
+          await erpDb.recordWorkshopPayment(
+            prodId,
+            finalPaymentAmount,
+            paymentMethod,
+            `سداد باقي أجر الورشة عند الاستلام — ${prod?.workshopName || 'ورشة خارجية'} (${
+              prod?.batchNumber || ''
+            })`
+          );
+        }
+      });
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    setState((prev) => {
+      const prod = prev.productionOrders.find((p) => p.id === prodId);
+      if (!prod) return prev;
+      const payNow = Math.max(0, Number(finalPaymentAmount) || 0);
+      const totalLabor = prod.agreedLaborTotal || prod.actualLaborCost || 0;
+      const nextPaid = (prod.paidToWorkshop || 0) + payNow;
+      const unpaidRemainder = Math.max(0, totalLabor - nextPaid);
       return {
         ...prev,
         models: prev.models.map((m) =>
@@ -897,9 +1006,41 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ),
         productionOrders: prev.productionOrders.map((p) =>
           p.id === prodId
-            ? { ...p, status: 'completed', completedQty: p.plannedQty }
+            ? {
+                ...p,
+                status: 'completed',
+                completedQty: p.plannedQty,
+                actualLaborCost: totalLabor,
+                paidToWorkshop: nextPaid,
+              }
             : p
         ),
+        workshops:
+          prod.workshopId && unpaidRemainder > 0
+            ? prev.workshops.map((w) =>
+                w.id === prod.workshopId
+                  ? { ...w, balancePayable: w.balancePayable + unpaidRemainder }
+                  : w
+              )
+            : prev.workshops,
+        expenses:
+          payNow > 0
+            ? [
+                {
+                  id: newUuid(),
+                  expenseDate: today,
+                  title: `سداد باقي أجر الورشة عند الاستلام — ${
+                    prod.workshopName || 'ورشة خارجية'
+                  } (${prod.batchNumber})`,
+                  category: 'خامات',
+                  isRawMaterialPurchase: true,
+                  amount: payNow,
+                  paymentMethod,
+                  notes: `تشغيلة ${prod.batchNumber}`,
+                },
+                ...prev.expenses,
+              ]
+            : prev.expenses,
       };
     });
   };
@@ -1072,6 +1213,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createProductionBatch,
         issueProductionBatch,
         completeProductionBatch,
+        recordWorkshopPayment,
         createSalesOrder,
         confirmSalesOrder,
         recordSalesPayment,

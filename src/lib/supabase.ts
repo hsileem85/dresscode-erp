@@ -353,6 +353,10 @@ export async function fetchFullERPState(): Promise<{
     id: p.id,
     batchNumber: p.batch_number,
     modelId: p.model_id,
+    workshopId: p.workshop_id ?? null,
+    workshopName: p.workshop_name || '',
+    agreedLaborTotal: Number(p.agreed_labor_total) || Number(p.actual_labor_cost) || 0,
+    paidToWorkshop: Number(p.paid_to_workshop) || 0,
     status: p.status,
     plannedQty: Number(p.planned_qty) || 0,
     completedQty: Number(p.completed_qty) || 0,
@@ -842,20 +846,44 @@ export const erpDb = {
   async createProductionOrder(payload: {
     batchNumber: string;
     modelId: string;
+    workshopId?: string | null;
+    workshopName?: string;
+    agreedLaborTotal?: number;
+    advancePayment?: number;
+    paymentMethod?: string;
     notes?: string;
     variants: { variantId: string; plannedQty: number }[];
   }) {
     const client = db();
     const id = newUuid();
     const plannedQty = payload.variants.reduce((s, v) => s + v.plannedQty, 0);
-    const { error: pErr } = await client.from('production_orders').insert({
+
+    const fullRow = {
       id,
       batch_number: payload.batchNumber,
       model_id: payload.modelId,
+      workshop_id: payload.workshopId || null,
+      workshop_name: payload.workshopName || '',
+      agreed_labor_total: Math.max(0, Number(payload.agreedLaborTotal) || 0),
+      paid_to_workshop: 0,
       planned_qty: plannedQty,
       status: 'planned',
       notes: payload.notes || null,
-    });
+    };
+
+    let { error: pErr } = await client.from('production_orders').insert(fullRow);
+    // Graceful fallback if Migration 005 hasn't been executed yet in Supabase
+    if (pErr && pErr.message?.includes('column')) {
+      const retry = await client.from('production_orders').insert({
+        id,
+        batch_number: payload.batchNumber,
+        model_id: payload.modelId,
+        planned_qty: plannedQty,
+        status: 'planned',
+        notes: payload.notes || null,
+      });
+      pErr = retry.error;
+    }
     if (pErr) throw pErr;
 
     const { error: vErr } = await client.from('production_order_variants').insert(
@@ -867,6 +895,16 @@ export const erpDb = {
       }))
     );
     if (vErr) throw vErr;
+
+    if (payload.advancePayment && payload.advancePayment > 0) {
+      await this.recordWorkshopPayment(
+        id,
+        payload.advancePayment,
+        payload.paymentMethod || 'كاش',
+        `دفعة تحت الحساب للورشة — ${payload.workshopName || 'ورشة خارجية'} (${payload.batchNumber})`
+      );
+    }
+
     return id;
   },
 
@@ -878,6 +916,28 @@ export const erpDb = {
   async completeProductionOrder(prodId: string) {
     const { error } = await db().rpc('complete_production_order', { p_prod_id: prodId });
     if (error) throw error;
+  },
+
+  async recordWorkshopPayment(
+    prodId: string,
+    amount: number,
+    paymentMethod = 'كاش',
+    notes?: string
+  ) {
+    const { error } = await db().rpc('record_workshop_payment', {
+      p_prod_id: prodId,
+      p_amount: amount,
+      p_payment_method: paymentMethod,
+      p_notes: notes || null,
+    });
+    if (error) {
+      if (error.message?.includes('record_workshop_payment')) {
+        throw new Error(
+          'يرجى تنفيذ ملف التحديث 005_workshop_advances_payouts.sql في Supabase SQL Editor لتفعيل دفعات الورش تلقائياً.'
+        );
+      }
+      throw error;
+    }
   },
 
   async createSalesOrder(payload: {

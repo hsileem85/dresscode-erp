@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Boxes, CheckCircle2, Edit3, Factory, Play, Plus } from 'lucide-react';
+import { Banknote, Boxes, CheckCircle2, Edit3, Factory, Play, Plus } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
-import type { ModelVariant } from '../../types/erp';
+import type { ModelVariant, ProductionOrder } from '../../types/erp';
 import { calculateModelCost, formatMoney } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
@@ -14,14 +14,31 @@ export const ProductionView: React.FC = () => {
     createProductionBatch,
     issueProductionBatch,
     completeProductionBatch,
+    recordWorkshopPayment,
   } = useERP();
 
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [variantModalOpen, setVariantModalOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string>(state.models[0]?.id || '');
   const [variantQtyMap, setVariantQtyMap] = useState<Record<string, number>>({});
+  const [batchWorkshopId, setBatchWorkshopId] = useState<string>('');
+  const [batchAgreedLabor, setBatchAgreedLabor] = useState<number>(0);
+  const [laborManuallyEdited, setLaborManuallyEdited] = useState(false);
+  const [batchAdvance, setBatchAdvance] = useState<number>(0);
+  const [batchPayMethod, setBatchPayMethod] = useState('كاش');
   const [batchNotes, setBatchNotes] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Workshop Advance / Settlement Modal
+  const [payoutOrder, setPayoutOrder] = useState<ProductionOrder | null>(null);
+  const [payoutAmount, setPayoutAmount] = useState<number>(0);
+  const [payoutMethod, setPayoutMethod] = useState('كاش');
+  const [payoutNotes, setPayoutNotes] = useState('');
+
+  // Complete & Settle on Delivery Modal
+  const [completeOrder, setCompleteOrder] = useState<ProductionOrder | null>(null);
+  const [deliveryPayAmount, setDeliveryPayAmount] = useState<number>(0);
+  const [deliveryPayMethod, setDeliveryPayMethod] = useState('كاش');
 
   // Add / Edit variant form (supports opening finished-goods stock & COGS)
   const [editingVariant, setEditingVariant] = useState<ModelVariant | null>(null);
@@ -41,6 +58,75 @@ export const ProductionView: React.FC = () => {
   );
 
   const selectedModel = state.models.find((m) => m.id === selectedModelId);
+
+  const getModelLaborPerPiece = (modelId: string) => {
+    const m = state.models.find((x) => x.id === modelId);
+    if (!m) return 0;
+    return calculateModelCost(m, state.fabrics, state.trims, state.overhead).directLaborCost;
+  };
+
+  const getOrderTotalLabor = (po: ProductionOrder) => {
+    if (po.agreedLaborTotal > 0) return po.agreedLaborTotal;
+    if (po.actualLaborCost > 0) return po.actualLaborCost;
+    return Math.round(getModelLaborPerPiece(po.modelId) * po.plannedQty * 100) / 100;
+  };
+
+  const getOrderRemainingWorkshop = (po: ProductionOrder) =>
+    Math.max(0, getOrderTotalLabor(po) - (po.paidToWorkshop || 0));
+
+  const getOrderWorkshopLabel = (po: ProductionOrder) => {
+    if (po.workshopName) return po.workshopName;
+    if (po.workshopId) {
+      const ws = state.workshops.find((w) => w.id === po.workshopId);
+      if (ws) return ws.name;
+    }
+    const model = state.models.find((m) => m.id === po.modelId);
+    return model?.laborSteps[0]?.workshopName || 'ورشة خارجية';
+  };
+
+  const totalDraftBatchQty = useMemo(
+    () => Object.values(variantQtyMap).reduce((s, q) => s + (Number(q) || 0), 0),
+    [variantQtyMap]
+  );
+
+  const openNewBatchModal = () => {
+    const firstModel = state.models[0];
+    const defaultModelId = firstModel?.id || '';
+    setSelectedModelId(defaultModelId);
+    setVariantQtyMap({});
+    const defaultWsId =
+      firstModel?.laborSteps.find((l) => l.workshopId)?.workshopId ||
+      state.workshops[0]?.id ||
+      '';
+    setBatchWorkshopId(defaultWsId);
+    setBatchAgreedLabor(0);
+    setLaborManuallyEdited(false);
+    setBatchAdvance(0);
+    setBatchPayMethod('كاش');
+    setBatchNotes('');
+    setBatchModalOpen(true);
+  };
+
+  const handleBatchModelChange = (modelId: string) => {
+    setSelectedModelId(modelId);
+    setVariantQtyMap({});
+    setLaborManuallyEdited(false);
+    setBatchAgreedLabor(0);
+    const m = state.models.find((x) => x.id === modelId);
+    const wsId =
+      m?.laborSteps.find((l) => l.workshopId)?.workshopId || state.workshops[0]?.id || '';
+    setBatchWorkshopId(wsId);
+  };
+
+  const handleBatchQtyChange = (variantId: string, qty: number) => {
+    const nextMap = { ...variantQtyMap, [variantId]: Math.max(0, qty) };
+    setVariantQtyMap(nextMap);
+    if (!laborManuallyEdited) {
+      const totalPieces = Object.values(nextMap).reduce((s, q) => s + (Number(q) || 0), 0);
+      const unitLabor = getModelLaborPerPiece(selectedModelId);
+      setBatchAgreedLabor(Math.round(totalPieces * unitLabor * 100) / 100);
+    }
+  };
 
   const applyModelDefaults = (modelId: string) => {
     setVarModelId(modelId);
@@ -124,15 +210,65 @@ export const ProductionView: React.FC = () => {
     const batchNumber = `PRD-${new Date().getFullYear()}-${String(
       state.productionOrders.length + 1
     ).padStart(3, '0')}`;
+    const ws = state.workshops.find((w) => w.id === batchWorkshopId);
+
     await createProductionBatch({
       batchNumber,
       modelId: selectedModel.id,
+      workshopId: ws?.id || null,
+      workshopName: ws?.name || selectedModel.laborSteps[0]?.workshopName || 'ورشة خارجية',
+      agreedLaborTotal: Math.max(0, Number(batchAgreedLabor) || 0),
+      advancePayment: Math.max(0, Number(batchAdvance) || 0),
+      paymentMethod: batchPayMethod,
       notes: batchNotes,
       variants,
     });
     setBatchModalOpen(false);
     setVariantQtyMap({});
     setBatchNotes('');
+  };
+
+  const openPayoutModal = (po: ProductionOrder) => {
+    const remaining = getOrderRemainingWorkshop(po);
+    setPayoutOrder(po);
+    setPayoutAmount(remaining > 0 ? remaining : 0);
+    setPayoutMethod('كاش');
+    setPayoutNotes(
+      po.status === 'completed'
+        ? `سداد باقي أجر الورشة — ${getOrderWorkshopLabel(po)} (${po.batchNumber})`
+        : `دفعة تحت الحساب للورشة — ${getOrderWorkshopLabel(po)} (${po.batchNumber})`
+    );
+  };
+
+  const handleRecordWorkshopPayout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payoutOrder || payoutAmount <= 0) return;
+    const targetId = payoutOrder.id;
+    await runAction(targetId, async () => {
+      await recordWorkshopPayment(targetId, payoutAmount, payoutMethod, payoutNotes);
+    });
+    setPayoutOrder(null);
+  };
+
+  const openCompleteModal = (po: ProductionOrder) => {
+    const remaining = getOrderRemainingWorkshop(po);
+    setCompleteOrder(po);
+    setDeliveryPayAmount(remaining);
+    setDeliveryPayMethod('كاش');
+  };
+
+  const handleConfirmComplete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!completeOrder) return;
+    const targetId = completeOrder.id;
+    await runAction(targetId, async () => {
+      await completeProductionBatch(
+        targetId,
+        Math.max(0, Number(deliveryPayAmount) || 0),
+        deliveryPayMethod
+      );
+    });
+    setCompleteOrder(null);
   };
 
   const runAction = async (id: string, fn: () => Promise<void>) => {
@@ -145,6 +281,9 @@ export const ProductionView: React.FC = () => {
   };
 
   const totalFinishedPieces = allVariants.reduce((s, v) => s + v.finishedGoodsQty, 0);
+  const totalUnpaidWorkshops = state.productionOrders
+    .filter((p) => p.status !== 'cancelled')
+    .reduce((s, p) => s + getOrderRemainingWorkshop(p), 0);
 
   return (
     <div className="space-y-6">
@@ -163,27 +302,28 @@ export const ProductionView: React.FC = () => {
         </div>
         <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5">
           <div className="text-[11px] sm:text-xs font-semibold text-[#6E6C66]">
-            تشغيلات التصنيع
+            تشغيلات الورش الخارجية
           </div>
           <div className="text-xl sm:text-2xl font-bold text-[#8E6742] tabular-nums mt-1.5 sm:mt-2">
             {state.productionOrders.length} تشغيلة
           </div>
           <div className="text-[11px] sm:text-xs text-[#6E6C66] mt-1">
-            {state.productionOrders.filter((p) => p.status === 'in_progress').length} قيد
-            التشغيل بالورش
+            {state.productionOrders.filter((p) => p.status === 'in_progress').length} قيد التقفيل
+            {totalUnpaidWorkshops > 0 && (
+              <span className="text-red-600 font-bold mr-1">
+                • متبقي للورش: {formatMoney(totalUnpaidWorkshops, state.currency)}
+              </span>
+            )}
           </div>
         </div>
         <div className="col-span-2 sm:col-span-1 bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5 flex flex-col justify-center gap-2">
           <button
             type="button"
-            onClick={() => {
-              setSelectedModelId(state.models[0]?.id || '');
-              setBatchModalOpen(true);
-            }}
+            onClick={openNewBatchModal}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold py-2.5 px-4 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>فتح أمر تصنيع (تشغيلة جديدة)</span>
+            <span>فتح أمر تصنيع (تقفيل بورشة)</span>
           </button>
           <button
             type="button"
@@ -201,7 +341,7 @@ export const ProductionView: React.FC = () => {
         <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex items-center gap-2">
           <Factory className="w-4 h-4 text-[#A67C52] shrink-0" />
           <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
-            أوامر التصنيع والتشغيل (صرف الخامات ← استلام منتج تام)
+            أوامر التصنيع الخارجي (تسليم القماش المقصوص ← دفعة تحت الحساب ← استلام وسداد الباقي)
           </h2>
         </div>
 
@@ -209,6 +349,9 @@ export const ProductionView: React.FC = () => {
         <div className="md:hidden divide-y divide-[#F0EFEA]">
           {state.productionOrders.map((po) => {
             const model = state.models.find((m) => m.id === po.modelId);
+            const totalLabor = getOrderTotalLabor(po);
+            const paid = po.paidToWorkshop || 0;
+            const remaining = Math.max(0, totalLabor - paid);
             return (
               <div key={po.id} className="p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
@@ -218,6 +361,9 @@ export const ProductionView: React.FC = () => {
                     </div>
                     <div className="font-bold text-sm text-[#1A1A1E] mt-0.5 truncate">
                       {model?.name || 'موديل'}
+                    </div>
+                    <div className="text-[11px] text-[#6E6C66] mt-0.5">
+                      الورشة: <span className="font-semibold text-[#1A1A1E]">{getOrderWorkshopLabel(po)}</span> • {po.plannedQty} قطعة
                     </div>
                   </div>
                   <span
@@ -232,48 +378,94 @@ export const ProductionView: React.FC = () => {
                     {po.status === 'completed'
                       ? 'مكتملة'
                       : po.status === 'in_progress'
-                      ? 'قيد التشغيل'
-                      : 'مخططة'}
+                      ? 'قيد التقفيل'
+                      : 'تجهيز القص'}
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
+                {/* Workshop Financials */}
+                <div className="grid grid-cols-3 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
                   <div>
-                    <div className="text-[10px] text-[#6E6C66]">الكمية</div>
-                    <div className="font-bold tabular-nums mt-0.5">{po.plannedQty} قطعة</div>
+                    <div className="text-[10px] text-[#6E6C66]">أجر الورشة</div>
+                    <div className="font-bold tabular-nums mt-0.5">
+                      {formatMoney(totalLabor, state.currency)}
+                    </div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-[#6E6C66]">تكلفة القطعة (COGS)</div>
-                    <div className="font-bold text-[#8E6742] tabular-nums mt-0.5">
-                      {po.actualUnitCogs > 0
-                        ? formatMoney(po.actualUnitCogs, state.currency)
-                        : 'عند الإتمام'}
+                    <div className="text-[10px] text-[#6E6C66]">تحت الحساب</div>
+                    <div className="font-bold text-emerald-700 tabular-nums mt-0.5">
+                      {formatMoney(paid, state.currency)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">المتبقي</div>
+                    <div
+                      className={`font-bold tabular-nums mt-0.5 ${
+                        remaining > 0 ? 'text-red-600' : 'text-emerald-700'
+                      }`}
+                    >
+                      {remaining > 0 ? formatMoney(remaining, state.currency) : 'خالص ✓'}
                     </div>
                   </div>
                 </div>
 
-                {po.status === 'planned' && (
-                  <button
-                    type="button"
-                    disabled={busyId === po.id}
-                    onClick={() => void runAction(po.id, () => issueProductionBatch(po.id))}
-                    className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50"
-                  >
-                    <Play className="w-3.5 h-3.5 text-[#BD956D]" />
-                    صرف الخامات وبدء التشغيل
-                  </button>
+                {po.actualUnitCogs > 0 && (
+                  <div className="text-[11px] text-[#6E6C66] flex items-center justify-between px-1">
+                    <span>التكلفة الفعلية للقطعة (COGS):</span>
+                    <span className="font-bold text-[#8E6742] tabular-nums">
+                      {formatMoney(po.actualUnitCogs, state.currency)}
+                    </span>
+                  </div>
                 )}
-                {po.status === 'in_progress' && (
-                  <button
-                    type="button"
-                    disabled={busyId === po.id}
-                    onClick={() => void runAction(po.id, () => completeProductionBatch(po.id))}
-                    className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#A67C52] text-white px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    إتمام واستلام المنتج التام
-                  </button>
-                )}
+
+                <div className="flex flex-wrap gap-2">
+                  {po.status === 'planned' && (
+                    <button
+                      type="button"
+                      disabled={busyId === po.id}
+                      onClick={() => void runAction(po.id, () => issueProductionBatch(po.id))}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50"
+                    >
+                      <Play className="w-3.5 h-3.5 text-[#BD956D]" />
+                      صرف القماش المقصوص للورشة
+                    </button>
+                  )}
+
+                  {po.status === 'in_progress' && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busyId === po.id}
+                        onClick={() => openPayoutModal(po)}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#F6EFE7] text-[#8E6742] px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50"
+                      >
+                        <Banknote className="w-3.5 h-3.5" />
+                        دفعة تحت الحساب
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId === po.id}
+                        onClick={() => openCompleteModal(po)}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#A67C52] text-white px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        استلام المنتج التام
+                      </button>
+                    </>
+                  )}
+
+                  {po.status === 'completed' && remaining > 0 && (
+                    <button
+                      type="button"
+                      disabled={busyId === po.id}
+                      onClick={() => openPayoutModal(po)}
+                      className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-bold bg-[#F6EFE7] text-[#8E6742] px-3 py-2 rounded-xl cursor-pointer disabled:opacity-50"
+                    >
+                      <Banknote className="w-3.5 h-3.5" />
+                      سداد باقي الورشة ({formatMoney(remaining, state.currency)})
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -289,10 +481,10 @@ export const ProductionView: React.FC = () => {
           <table className="w-full text-sm text-right">
             <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
               <tr>
-                <th className="py-3 px-4">رقم التشغيلة</th>
-                <th className="py-3 px-4">الموديل</th>
-                <th className="py-3 px-4">الكمية</th>
-                <th className="py-3 px-4">التكلفة الفعلية للقطعة (COGS)</th>
+                <th className="py-3 px-4">التشغيلة / الموديل</th>
+                <th className="py-3 px-4">الورشة / الكمية</th>
+                <th className="py-3 px-4">حساب الورشة (الإجمالي / المدفوع / المتبقي)</th>
+                <th className="py-3 px-4">تكلفة القطعة (COGS)</th>
                 <th className="py-3 px-4">الحالة</th>
                 <th className="py-3 px-4">إجراء المرحلة</th>
               </tr>
@@ -300,15 +492,43 @@ export const ProductionView: React.FC = () => {
             <tbody className="divide-y divide-[#F0EFEA]">
               {state.productionOrders.map((po) => {
                 const model = state.models.find((m) => m.id === po.modelId);
+                const totalLabor = getOrderTotalLabor(po);
+                const paid = po.paidToWorkshop || 0;
+                const remaining = Math.max(0, totalLabor - paid);
                 return (
                   <tr key={po.id} className="hover:bg-[#FAF9F7]">
-                    <td className="py-3 px-4 font-mono font-bold text-xs">{po.batchNumber}</td>
-                    <td className="py-3 px-4 font-semibold">{model?.name || 'موديل'}</td>
-                    <td className="py-3 px-4 tabular-nums">{po.plannedQty} قطعة</td>
-                    <td className="py-3 px-4 tabular-nums font-bold text-[#8E6742]">
+                    <td className="py-3 px-4">
+                      <div className="font-mono font-bold text-xs text-[#6E6C66]">
+                        {po.batchNumber}
+                      </div>
+                      <div className="font-semibold text-[#1A1A1E]">{model?.name || 'موديل'}</div>
+                    </td>
+                    <td className="py-3 px-4 text-xs">
+                      <div className="font-semibold text-[#1A1A1E]">{getOrderWorkshopLabel(po)}</div>
+                      <div className="text-[#6E6C66] tabular-nums">{po.plannedQty} قطعة</div>
+                    </td>
+                    <td className="py-3 px-4 text-xs tabular-nums">
+                      <div className="font-bold text-[#1A1A1E]">
+                        الإجمالي: {formatMoney(totalLabor, state.currency)}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-emerald-700 font-semibold">
+                          مدفوع: {formatMoney(paid, state.currency)}
+                        </span>
+                        <span>•</span>
+                        {remaining > 0 ? (
+                          <span className="text-red-600 font-bold">
+                            متبقي: {formatMoney(remaining, state.currency)}
+                          </span>
+                        ) : (
+                          <span className="text-emerald-700 font-bold">خالص ✓</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 tabular-nums font-bold text-[#8E6742] text-xs">
                       {po.actualUnitCogs > 0
                         ? formatMoney(po.actualUnitCogs, state.currency)
-                        : 'يُحسب عند الإتمام'}
+                        : 'يُحسب عند الاستلام'}
                     </td>
                     <td className="py-3 px-4">
                       <span
@@ -323,41 +543,70 @@ export const ProductionView: React.FC = () => {
                         {po.status === 'completed'
                           ? 'مكتملة (بالمخزن)'
                           : po.status === 'in_progress'
-                          ? 'قيد التشغيل بالورش'
-                          : 'مخططة'}
+                          ? 'قيد التقفيل بالورشة'
+                          : 'تجهيز القص'}
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      {po.status === 'planned' && (
-                        <button
-                          type="button"
-                          disabled={busyId === po.id}
-                          onClick={() =>
-                            void runAction(po.id, () => issueProductionBatch(po.id))
-                          }
-                          className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
-                        >
-                          <Play className="w-3.5 h-3.5 text-[#BD956D]" />
-                          صرف الخامات وبدء التشغيل
-                        </button>
-                      )}
-                      {po.status === 'in_progress' && (
-                        <button
-                          type="button"
-                          disabled={busyId === po.id}
-                          onClick={() =>
-                            void runAction(po.id, () => completeProductionBatch(po.id))
-                          }
-                          className="inline-flex items-center gap-1 text-xs font-bold bg-[#A67C52] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          إتمام واستلام المنتج التام
-                        </button>
-                      )}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {po.status === 'planned' && (
+                          <button
+                            type="button"
+                            disabled={busyId === po.id}
+                            onClick={() =>
+                              void runAction(po.id, () => issueProductionBatch(po.id))
+                            }
+                            className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                          >
+                            <Play className="w-3.5 h-3.5 text-[#BD956D]" />
+                            صرف القماش المقصوص
+                          </button>
+                        )}
+                        {po.status === 'in_progress' && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busyId === po.id}
+                              onClick={() => openPayoutModal(po)}
+                              className="inline-flex items-center gap-1 text-xs font-bold bg-[#F6EFE7] hover:bg-[#EDE0D1] text-[#8E6742] px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                            >
+                              <Banknote className="w-3.5 h-3.5" />
+                              تحت الحساب
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyId === po.id}
+                              onClick={() => openCompleteModal(po)}
+                              className="inline-flex items-center gap-1 text-xs font-bold bg-[#A67C52] hover:bg-[#8E6742] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              استلام وتسوية
+                            </button>
+                          </>
+                        )}
+                        {po.status === 'completed' && remaining > 0 && (
+                          <button
+                            type="button"
+                            disabled={busyId === po.id}
+                            onClick={() => openPayoutModal(po)}
+                            className="inline-flex items-center gap-1 text-xs font-bold bg-[#F6EFE7] hover:bg-[#EDE0D1] text-[#8E6742] px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                          >
+                            <Banknote className="w-3.5 h-3.5" />
+                            سداد الباقي
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
               })}
+              {state.productionOrders.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-xs text-[#6E6C66]">
+                    لا توجد تشغيلات تصنيع مسجلة بعد.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -493,34 +742,51 @@ export const ProductionView: React.FC = () => {
         </div>
       </div>
 
-      {/* Create Batch Modal */}
+      {/* Create Batch Modal (with Workshop Selection + Optional Advance Payment) */}
       <Modal
         open={batchModalOpen}
         onClose={() => setBatchModalOpen(false)}
-        title="فتح أمر تصنيع جديد (تشغيلة)"
-        subtitle="اختر الموديل وحدد الكمية المطلوبة لكل لون ومقاس"
+        title="فتح أمر تصنيع وتقفيل بورشة خارجية"
+        subtitle="اختر الموديل والكميات المقصوصة، وحدد الورشة والدفعة تحت الحساب (اختياري — الباقي يُسدد مع الاستلام)"
       >
         <form onSubmit={handleCreateBatch} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold mb-1">الموديل</label>
-            <select
-              value={selectedModelId}
-              onChange={(e) => {
-                setSelectedModelId(e.target.value);
-                setVariantQtyMap({});
-              }}
-              className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs"
-            >
-              {state.models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} ({m.sku})
-                </option>
-              ))}
-            </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1">الموديل</label>
+              <select
+                value={selectedModelId}
+                onChange={(e) => handleBatchModelChange(e.target.value)}
+                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs"
+              >
+                {state.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({m.sku})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">الورشة المسؤولة عن التقفيل</label>
+              <select
+                value={batchWorkshopId}
+                onChange={(e) => setBatchWorkshopId(e.target.value)}
+                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs"
+              >
+                <option value="">-- ورشة خارجية (من بطاقة الموديل) --</option>
+                {state.workshops.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name} {w.specialty ? `(${w.specialty})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="space-y-2">
-            <div className="text-xs font-bold">توزيع الكميات على الألوان والمقاسات:</div>
+            <div className="flex items-center justify-between text-xs font-bold">
+              <span>توزيع القطع المقصوصة على الألوان والمقاسات:</span>
+              <span className="text-[#8E6742] tabular-nums">الإجمالي: {totalDraftBatchQty} قطعة</span>
+            </div>
             {selectedModel && selectedModel.variants.length > 0 ? (
               selectedModel.variants.map((v) => (
                 <div
@@ -536,12 +802,7 @@ export const ProductionView: React.FC = () => {
                     type="number"
                     min="0"
                     value={variantQtyMap[v.id] ?? 0}
-                    onChange={(e) =>
-                      setVariantQtyMap((prev) => ({
-                        ...prev,
-                        [v.id]: Number(e.target.value),
-                      }))
-                    }
+                    onChange={(e) => handleBatchQtyChange(v.id, Number(e.target.value))}
                     className="w-20 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1 text-xs text-center tabular-nums"
                   />
                 </div>
@@ -554,18 +815,91 @@ export const ProductionView: React.FC = () => {
             )}
           </div>
 
+          {/* Workshop Fee & Optional Advance Payment */}
+          <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 space-y-3">
+            <div className="text-xs font-bold text-[#7B5836]">
+              حساب الورشة (دفعة تحت الحساب اختيارية + الباقي مع الاستلام)
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label className="block text-[11px] font-semibold mb-1">
+                  إجمالي أجر الورشة
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={batchAgreedLabor}
+                  onChange={(e) => {
+                    setLaborManuallyEdited(true);
+                    setBatchAgreedLabor(Number(e.target.value));
+                  }}
+                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold tabular-nums"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold mb-1">
+                  دفعة تحت الحساب الآن (اختياري)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={batchAdvance}
+                  onChange={(e) => setBatchAdvance(Number(e.target.value))}
+                  placeholder="0"
+                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold text-emerald-700 tabular-nums"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold mb-1">طريقة الدفع</label>
+                <select
+                  value={batchPayMethod}
+                  onChange={(e) => setBatchPayMethod(e.target.value)}
+                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs"
+                >
+                  {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-2 border-t border-[#E6D5C3]">
+              <span className="text-[#6E6C66]">
+                المتبقي للورشة عند الاستلام:{' '}
+                <strong className="text-[#1A1A1E] tabular-nums">
+                  {formatMoney(Math.max(0, batchAgreedLabor - batchAdvance), state.currency)}
+                </strong>
+              </span>
+              {batchAdvance > 0 && (
+                <span className="text-emerald-700 font-semibold">
+                  ✓ تُخصم الدفعة من الخزنة تلقائياً (لا تُكرر في P&amp;L)
+                </span>
+              )}
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-semibold mb-1">ملاحظات التشغيلة</label>
             <input
               type="text"
               value={batchNotes}
               onChange={(e) => setBatchNotes(e.target.value)}
-              placeholder="مثال: تشغيلة عيد الفطر"
+              placeholder="مثال: قماش مقصوص مسلّم للورشة — استلام الخميس"
               className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
             />
           </div>
 
-          <div className="flex justify-end pt-2">
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+            <button
+              type="button"
+              onClick={() => setBatchModalOpen(false)}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+            >
+              إلغاء
+            </button>
             <button
               type="submit"
               className="px-5 py-2 rounded-xl bg-[#1A1A1E] text-white text-xs font-bold cursor-pointer"
@@ -574,6 +908,181 @@ export const ProductionView: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Workshop Advance / Balance Payment Modal */}
+      <Modal
+        open={Boolean(payoutOrder)}
+        onClose={() => setPayoutOrder(null)}
+        title={`دفع للورشة — تشغيلة ${payoutOrder?.batchNumber || ''}`}
+        subtitle={
+          payoutOrder
+            ? `${getOrderWorkshopLabel(payoutOrder)} • إجمالي الأجر: ${formatMoney(
+                getOrderTotalLabor(payoutOrder),
+                state.currency
+              )} • المدفوع: ${formatMoney(
+                payoutOrder.paidToWorkshop || 0,
+                state.currency
+              )} • المتبقي: ${formatMoney(getOrderRemainingWorkshop(payoutOrder), state.currency)}`
+            : ''
+        }
+      >
+        <form onSubmit={handleRecordWorkshopPayout} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1">قيمة الدفعة *</label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                required
+                value={payoutAmount}
+                onChange={(e) => setPayoutAmount(Number(e.target.value))}
+                className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm font-bold tabular-nums"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">طريقة الدفع</label>
+              <select
+                value={payoutMethod}
+                onChange={(e) => setPayoutMethod(e.target.value)}
+                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
+              >
+                {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold mb-1">البيان</label>
+            <input
+              type="text"
+              value={payoutNotes}
+              onChange={(e) => setPayoutNotes(e.target.value)}
+              className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+            />
+          </div>
+
+          <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-semibold">
+            ✓ تُخصم الدفعة تلقائياً من رصيد الخزنة (المتاح) وتُسجّل كـ «خامات / تشغيل» بدون تكرارها كمصروف في الأرباح والخسائر (P&amp;L).
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+            <button
+              type="button"
+              onClick={() => setPayoutOrder(null)}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold cursor-pointer"
+            >
+              تأكيد الدفع للورشة
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Complete Production & Final Workshop Settlement Modal */}
+      <Modal
+        open={Boolean(completeOrder)}
+        onClose={() => setCompleteOrder(null)}
+        title={`استلام المنتج التام وتسوية الورشة (${completeOrder?.batchNumber || ''})`}
+        subtitle="سيتم إضافة القطع الجاهزة لمخزون المنتج التام وحساب التكلفة الفعلية للقطعة (COGS)"
+      >
+        {completeOrder && (
+          <form onSubmit={handleConfirmComplete} className="space-y-4">
+            <div className="rounded-xl bg-[#FAF9F7] border border-[#E5E3DD] p-3.5 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[#6E6C66]">الورشة:</span>
+                <span className="font-bold text-[#1A1A1E]">
+                  {getOrderWorkshopLabel(completeOrder)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#6E6C66]">الكمية المستلمة للمخزن التام:</span>
+                <span className="font-bold text-[#1A1A1E] tabular-nums">
+                  {completeOrder.plannedQty} قطعة
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-[#EAE8E2]">
+                <span className="text-[#6E6C66]">إجمالي أجر الورشة:</span>
+                <span className="font-bold tabular-nums">
+                  {formatMoney(getOrderTotalLabor(completeOrder), state.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#6E6C66]">المدفوع مسبقاً (تحت الحساب):</span>
+                <span className="font-bold text-emerald-700 tabular-nums">
+                  {formatMoney(completeOrder.paidToWorkshop || 0, state.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[#1A1A1E]">الباقي المستحق للورشة:</span>
+                <span className="font-extrabold text-red-600 tabular-nums">
+                  {formatMoney(getOrderRemainingWorkshop(completeOrder), state.currency)}
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 space-y-3">
+              <div className="text-xs font-bold text-[#7B5836]">
+                السداد للورشة مع الاستلام الآن (اتركه 0 إذا ستسدد لاحقاً)
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold mb-1">
+                    المبلغ المدفوع الآن
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={deliveryPayAmount}
+                    onChange={(e) => setDeliveryPayAmount(Number(e.target.value))}
+                    className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm font-bold text-emerald-700 tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold mb-1">طريقة الدفع</label>
+                  <select
+                    value={deliveryPayMethod}
+                    onChange={(e) => setDeliveryPayMethod(e.target.value)}
+                    className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
+                  >
+                    {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+              <button
+                type="button"
+                onClick={() => setCompleteOrder(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold cursor-pointer"
+              >
+                تأكيد الاستلام والتسوية
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
 
       {/* Add / Edit Variant Modal (with Opening Finished-Goods Stock & COGS) */}

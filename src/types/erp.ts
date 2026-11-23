@@ -267,6 +267,10 @@ export interface ProductionOrder {
   id: string;
   batchNumber: string;
   modelId: string;
+  workshopId?: string | null;
+  workshopName?: string;
+  agreedLaborTotal: number;
+  paidToWorkshop: number;
   status: ProductionOrderStatus;
   plannedQty: number;
   completedQty: number;
