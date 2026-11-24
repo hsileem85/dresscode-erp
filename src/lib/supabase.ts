@@ -1299,12 +1299,22 @@ export const erpDb = {
       workshopId?: string | null;
       workshopName?: string;
       agreedLaborTotal: number;
+      paidToWorkshop?: number;
       notes?: string;
       variants?: { variantId: string; plannedQty: number }[];
     },
     currentOrder?: Pick<
       ProductionOrder,
-      'status' | 'workshopId' | 'agreedLaborTotal' | 'actualLaborCost'
+      | 'batchNumber'
+      | 'status'
+      | 'workshopId'
+      | 'agreedLaborTotal'
+      | 'actualLaborCost'
+      | 'paidToWorkshop'
+      | 'completedQty'
+      | 'actualMaterialCost'
+      | 'allocatedOverheadCost'
+      | 'actualUnitCogs'
     >
   ) {
     const client = db();
@@ -1315,14 +1325,22 @@ export const erpDb = {
             .map((v) => ({ variant_id: v.variantId, planned_qty: v.plannedQty }))
         : null;
 
+    const newLabor = Math.max(0, Math.round((Number(payload.agreedLaborTotal) || 0) * 100) / 100);
+    const oldPaid = Math.max(0, Number(currentOrder?.paidToWorkshop) || 0);
+    const newPaid =
+      payload.paidToWorkshop !== undefined
+        ? Math.max(0, Math.round((Number(payload.paidToWorkshop) || 0) * 100) / 100)
+        : oldPaid;
+
     const { error } = await client.rpc('update_production_order', {
       p_prod_id: payload.id,
       p_model_id: payload.modelId,
       p_workshop_id: payload.workshopId || null,
       p_workshop_name: payload.workshopName || '',
-      p_agreed_labor_total: Math.max(0, Number(payload.agreedLaborTotal) || 0),
+      p_agreed_labor_total: newLabor,
       p_notes: payload.notes || null,
       p_variants: variantsJson,
+      p_paid_to_workshop: newPaid,
     });
     if (!error) return;
 
@@ -1333,25 +1351,160 @@ export const erpDb = {
 
     if (missingFn) {
       const status = currentOrder?.status;
-      if (status === 'completed') {
-        const prevLabor = currentOrder?.actualLaborCost || currentOrder?.agreedLaborTotal || 0;
-        const workshopChanged =
-          (currentOrder?.workshopId || null) !== (payload.workshopId || null);
-        const laborChanged =
-          Math.round(prevLabor * 100) !==
-          Math.round(Math.max(0, Number(payload.agreedLaborTotal) || 0) * 100);
+      const batchNumber = currentOrder?.batchNumber || '';
+      const paidChanged = Math.round(oldPaid * 100) !== Math.round(newPaid * 100);
 
-        if (workshopChanged || laborChanged) {
-          throw new Error(
-            'لتعديل الورشة أو أجر الورشة على أمر تصنيع مكتمل مع تسوية رصيد الورشة تلقائياً، يرجى تشغيل ملف التحديث 010_update_production_order.sql في Supabase SQL Editor أولاً.'
-          );
+      // Reconcile financial_transactions & cashbox (expenses) if paidToWorkshop changed
+      if (paidChanged) {
+        const { data: lastTx } = await client
+          .from('financial_transactions')
+          .select('payment_method')
+          .eq('reference_type', 'production_order')
+          .eq('reference_id', payload.id)
+          .eq('tx_type', 'workshop_payout')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const payMethod = (lastTx?.payment_method as string | undefined) || 'كاش';
+
+        await client
+          .from('financial_transactions')
+          .delete()
+          .eq('reference_type', 'production_order')
+          .eq('reference_id', payload.id)
+          .eq('tx_type', 'workshop_payout');
+
+        if (batchNumber) {
+          await client
+            .from('expenses')
+            .delete()
+            .eq('is_raw_material_purchase', true)
+            .eq('category', 'خامات')
+            .eq('notes', `تشغيلة ${batchNumber}`);
         }
 
-        const { error: notesErr } = await client
+        if (newPaid > 0) {
+          const payoutLabel = `${
+            status === 'completed' ? 'مدفوعات الورشة' : 'دفعة تحت الحساب للورشة'
+          } — ${payload.workshopName || 'ورشة خارجية'}${batchNumber ? ` (${batchNumber})` : ''}`;
+
+          await client.from('financial_transactions').insert({
+            tx_type: 'workshop_payout',
+            amount: newPaid,
+            workshop_id: payload.workshopId || null,
+            reference_type: 'production_order',
+            reference_id: payload.id,
+            payment_method: payMethod,
+            notes: payoutLabel,
+          });
+
+          if (batchNumber) {
+            await client.from('expenses').insert({
+              expense_date: new Date().toISOString().slice(0, 10),
+              title: payoutLabel,
+              category: 'خامات',
+              is_raw_material_purchase: true,
+              amount: newPaid,
+              payment_method: payMethod,
+              notes: `تشغيلة ${batchNumber}`,
+            });
+          }
+        }
+      } else if ((currentOrder?.workshopId || null) !== (payload.workshopId || null)) {
+        await client
+          .from('financial_transactions')
+          .update({ workshop_id: payload.workshopId || null })
+          .eq('reference_type', 'production_order')
+          .eq('reference_id', payload.id);
+      }
+
+      if (status === 'completed') {
+        const oldLabor = currentOrder?.actualLaborCost || currentOrder?.agreedLaborTotal || 0;
+        const oldUnpaid = Math.max(0, oldLabor - oldPaid);
+        const newUnpaid = Math.max(0, newLabor - newPaid);
+        const oldWsId = currentOrder?.workshopId || null;
+        const newWsId = payload.workshopId || null;
+
+        if (oldWsId === newWsId) {
+          if (newWsId && Math.round((newUnpaid - oldUnpaid) * 100) !== 0) {
+            const { data: wsRow } = await client
+              .from('workshops')
+              .select('balance_payable')
+              .eq('id', newWsId)
+              .maybeSingle();
+            if (wsRow) {
+              const nextBal = Math.max(
+                0,
+                Math.round(((Number(wsRow.balance_payable) || 0) + (newUnpaid - oldUnpaid)) * 100) /
+                  100
+              );
+              await client
+                .from('workshops')
+                .update({ balance_payable: nextBal })
+                .eq('id', newWsId);
+            }
+          }
+        } else {
+          if (oldWsId && oldUnpaid > 0) {
+            const { data: oldWs } = await client
+              .from('workshops')
+              .select('balance_payable')
+              .eq('id', oldWsId)
+              .maybeSingle();
+            if (oldWs) {
+              const nextBal = Math.max(
+                0,
+                Math.round(((Number(oldWs.balance_payable) || 0) - oldUnpaid) * 100) / 100
+              );
+              await client
+                .from('workshops')
+                .update({ balance_payable: nextBal })
+                .eq('id', oldWsId);
+            }
+          }
+          if (newWsId && newUnpaid > 0) {
+            const { data: newWs } = await client
+              .from('workshops')
+              .select('balance_payable')
+              .eq('id', newWsId)
+              .maybeSingle();
+            if (newWs) {
+              const nextBal =
+                Math.round(((Number(newWs.balance_payable) || 0) + newUnpaid) * 100) / 100;
+              await client
+                .from('workshops')
+                .update({ balance_payable: nextBal })
+                .eq('id', newWsId);
+            }
+          }
+        }
+
+        const completedQty = Number(currentOrder?.completedQty) || 0;
+        const nextCogs =
+          completedQty > 0
+            ? Math.round(
+                (((Number(currentOrder?.actualMaterialCost) || 0) +
+                  newLabor +
+                  (Number(currentOrder?.allocatedOverheadCost) || 0)) /
+                  completedQty) *
+                  100
+              ) / 100
+            : Number(currentOrder?.actualUnitCogs) || 0;
+
+        const { error: compUpdErr } = await client
           .from('production_orders')
-          .update({ notes: payload.notes?.trim() || null })
+          .update({
+            workshop_id: payload.workshopId || null,
+            workshop_name: payload.workshopName || '',
+            agreed_labor_total: newLabor,
+            actual_labor_cost: newLabor,
+            paid_to_workshop: newPaid,
+            actual_unit_cogs: nextCogs,
+            notes: payload.notes?.trim() || null,
+          })
           .eq('id', payload.id);
-        if (notesErr) throw notesErr;
+        if (compUpdErr) throw compUpdErr;
         return;
       }
 
@@ -1362,7 +1515,8 @@ export const erpDb = {
       const updatePatch: Record<string, unknown> = {
         workshop_id: payload.workshopId || null,
         workshop_name: payload.workshopName || '',
-        agreed_labor_total: Math.max(0, Number(payload.agreedLaborTotal) || 0),
+        agreed_labor_total: newLabor,
+        paid_to_workshop: newPaid,
         notes: payload.notes?.trim() || null,
       };
       if (status === 'planned') {

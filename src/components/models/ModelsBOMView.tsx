@@ -1077,6 +1077,33 @@ export const ModelsBOMView: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* Bottom Save Bar */}
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-[#6E6C66]">
+                الموديل: <span className="font-bold text-[#1A1A1E]">{draft.name || 'موديل جديد'}</span>
+                {draft.sku && <span className="font-mono mr-1.5">({draft.sku})</span>}
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => openModelInCalculator(draft.id)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2.5 rounded-xl bg-[#FAF9F7] hover:bg-[#F3F2EE] text-[#1A1A1E] border border-[#E5E3DD] cursor-pointer"
+                >
+                  <Calculator className="w-3.5 h-3.5 text-[#A67C52]" />
+                  <span>حاسبة التسعير</span>
+                </button>
+                <button
+                  id="btn-save-model-bottom"
+                  type="button"
+                  onClick={handleSave}
+                  className="inline-flex items-center justify-center gap-1.5 text-xs font-bold px-5 py-2.5 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white transition-colors cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5 text-[#BD956D]" />
+                  <span>{savedToast ? 'تم الحفظ ✓' : 'حفظ البطاقة'}</span>
+                </button>
+              </div>
+            </div>
           </>
         )}
       </div>

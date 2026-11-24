@@ -180,7 +180,7 @@ export const ProductionView: React.FC = () => {
     setBatchWorkshopId(matchedWs);
     setBatchAgreedLabor(getOrderTotalLabor(po));
     setLaborManuallyEdited(false);
-    setBatchAdvance(0);
+    setBatchAdvance(po.paidToWorkshop || 0);
     setBatchPayMethod('كاش');
     setBatchNotes(po.notes || '');
     setBatchModalOpen(true);
@@ -319,6 +319,7 @@ export const ProductionView: React.FC = () => {
           workshopId: ws?.id || null,
           workshopName: resolvedWorkshopName,
           agreedLaborTotal: Math.max(0, Number(batchAgreedLabor) || 0),
+          paidToWorkshop: Math.max(0, Number(batchAdvance) || 0),
           notes: batchNotes,
           variants,
         });
@@ -1215,7 +1216,7 @@ export const ProductionView: React.FC = () => {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-bold text-[#7B5836]">
                 {editingBatch
-                  ? 'حساب الورشة (المدفوعات السابقة محفوظة ويمكنك تعديل إجمالي الأجر)'
+                  ? 'حساب الورشة (يمكنك تعديل إجمالي الأجر أو الدفعة تحت الحساب المدفوعة للورشة)'
                   : 'حساب الورشة (دفعة تحت الحساب اختيارية + الباقي مع الاستلام)'}
               </span>
               {editingBatch && editingBatch.status !== 'completed' && totalDraftBatchQty > 0 && (
@@ -1234,43 +1235,53 @@ export const ProductionView: React.FC = () => {
             </div>
 
             {editingBatch ? (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div>
-                  <label className="block text-[11px] font-semibold mb-1">
-                    إجمالي أجر الورشة
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={batchAgreedLabor}
-                    onChange={(e) => {
-                      setLaborManuallyEdited(true);
-                      setBatchAgreedLabor(Number(e.target.value));
-                    }}
-                    className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold tabular-nums"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold mb-1 text-[#6E6C66]">
-                    المدفوع للورشة حتى الآن
-                  </label>
-                  <div className="w-full rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] px-2.5 py-2 text-xs font-bold text-emerald-700 tabular-nums">
-                    {formatMoney(editingBatch.paidToWorkshop || 0, state.currency)}
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1">
+                      إجمالي أجر الورشة
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={batchAgreedLabor}
+                      onChange={(e) => {
+                        setLaborManuallyEdited(true);
+                        setBatchAgreedLabor(Number(e.target.value));
+                      }}
+                      className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1 text-emerald-800">
+                      المدفوع للورشة حتى الآن (تحت الحساب)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={batchAdvance}
+                      onChange={(e) => setBatchAdvance(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-full rounded-xl border border-emerald-200 bg-white px-2.5 py-2 text-xs font-bold text-emerald-700 tabular-nums focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1 text-[#6E6C66]">
+                      المتبقي بعد التعديل
+                    </label>
+                    <div className="w-full rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] px-2.5 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums">
+                      {formatMoney(
+                        Math.max(0, batchAgreedLabor - (Number(batchAdvance) || 0)),
+                        state.currency
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold mb-1 text-[#6E6C66]">
-                    المتبقي بعد التعديل
-                  </label>
-                  <div className="w-full rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] px-2.5 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums">
-                    {formatMoney(
-                      Math.max(0, batchAgreedLabor - (editingBatch.paidToWorkshop || 0)),
-                      state.currency
-                    )}
-                  </div>
+                <div className="text-[11px] text-[#6E6C66] pt-1.5 border-t border-[#E6D5C3]">
+                  تعديل الدفعة تحت الحساب يُحدّث رصيد الخزنة وحساب الورشة تلقائياً.
                 </div>
-              </div>
+              </>
             ) : (
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">

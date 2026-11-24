@@ -157,6 +157,7 @@ interface ERPContextValue {
     workshopId?: string | null;
     workshopName?: string;
     agreedLaborTotal: number;
+    paidToWorkshop?: number;
     notes?: string;
     variants?: { variantId: string; plannedQty: number }[];
   }) => Promise<void>;
@@ -1388,19 +1389,32 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (cloudConnected) {
       await runCloud(() =>
         erpDb.updateProductionOrder(payload, {
+          batchNumber: existing.batchNumber,
           status: existing.status,
           workshopId: existing.workshopId,
           agreedLaborTotal: existing.agreedLaborTotal,
           actualLaborCost: existing.actualLaborCost,
+          paidToWorkshop: existing.paidToWorkshop,
+          completedQty: existing.completedQty,
+          actualMaterialCost: existing.actualMaterialCost,
+          allocatedOverheadCost: existing.allocatedOverheadCost,
+          actualUnitCogs: existing.actualUnitCogs,
         })
       );
       return;
     }
 
     const newLabor = Math.max(0, Number(payload.agreedLaborTotal) || 0);
+    const today = new Date().toISOString().slice(0, 10);
     setState((prev) => {
       const target = prev.productionOrders.find((p) => p.id === payload.id);
       if (!target) return prev;
+
+      const oldPaid = Math.max(0, target.paidToWorkshop || 0);
+      const newPaid =
+        payload.paidToWorkshop !== undefined
+          ? Math.max(0, Math.round((Number(payload.paidToWorkshop) || 0) * 100) / 100)
+          : oldPaid;
 
       const cleanVariants =
         payload.variants && target.status !== 'completed'
@@ -1414,9 +1428,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let nextWorkshops = prev.workshops;
       if (target.status === 'completed') {
         const oldLabor = target.actualLaborCost || target.agreedLaborTotal || 0;
-        const paid = target.paidToWorkshop || 0;
-        const oldUnpaid = Math.max(0, oldLabor - paid);
-        const newUnpaid = Math.max(0, newLabor - paid);
+        const oldUnpaid = Math.max(0, oldLabor - oldPaid);
+        const newUnpaid = Math.max(0, newLabor - newPaid);
         const oldWsId = target.workshopId || null;
         const newWsId = payload.workshopId || null;
 
@@ -1441,6 +1454,37 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
+      let nextExpenses = prev.expenses;
+      if (Math.round(oldPaid * 100) !== Math.round(newPaid * 100)) {
+        const existingBatchExp = prev.expenses.find(
+          (e) => e.isRawMaterialPurchase && e.notes === `تشغيلة ${target.batchNumber}`
+        );
+        const payMethod = existingBatchExp?.paymentMethod || 'كاش';
+        const filtered = prev.expenses.filter(
+          (e) => !(e.isRawMaterialPurchase && e.notes === `تشغيلة ${target.batchNumber}`)
+        );
+        nextExpenses =
+          newPaid > 0
+            ? [
+                {
+                  id: newUuid(),
+                  expenseDate: existingBatchExp?.expenseDate || today,
+                  title: `${
+                    target.status === 'completed' ? 'مدفوعات الورشة' : 'دفعة تحت الحساب للورشة'
+                  } — ${payload.workshopName || target.workshopName || 'ورشة خارجية'} (${
+                    target.batchNumber
+                  })`,
+                  category: 'خامات',
+                  isRawMaterialPurchase: true,
+                  amount: newPaid,
+                  paymentMethod: payMethod,
+                  notes: `تشغيلة ${target.batchNumber}`,
+                },
+                ...filtered,
+              ]
+            : filtered;
+      }
+
       const nextActualCogs =
         target.status === 'completed' && target.completedQty > 0
           ? Math.round(
@@ -1453,6 +1497,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return {
         ...prev,
         workshops: nextWorkshops,
+        expenses: nextExpenses,
         productionOrders: prev.productionOrders.map((p) => {
           if (p.id !== payload.id) return p;
           return {
@@ -1462,6 +1507,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             workshopName: payload.workshopName || '',
             agreedLaborTotal: newLabor,
             actualLaborCost: p.status === 'completed' ? newLabor : p.actualLaborCost,
+            paidToWorkshop: newPaid,
             actualUnitCogs: nextActualCogs,
             plannedQty: p.status === 'completed' ? p.plannedQty : newPlannedQty,
             notes: payload.notes || '',
