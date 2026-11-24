@@ -1624,4 +1624,139 @@ export const erpDb = {
       .eq('id', saleId);
     if (error) throw error;
   },
+
+  async cancelSalesOrder(
+    saleId: string,
+    currentOrder?: Pick<SalesOrder, 'orderNumber' | 'status' | 'paidAmount' | 'customerId' | 'items'>
+  ) {
+    const client = db();
+    const { error } = await client.rpc('cancel_sales_order', { p_sale_id: saleId });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('cancel_sales_order');
+    if (!missingFn) throw error;
+
+    // Seamless fallback if Migration 015 hasn't been executed yet in Supabase
+    const status = currentOrder?.status;
+    if (status === 'cancelled') return;
+
+    const shouldRestoreStock =
+      status === 'confirmed' || status === 'shipped' || status === 'delivered';
+
+    if (shouldRestoreStock && currentOrder?.items?.length) {
+      const varIds = Array.from(new Set(currentOrder.items.map((it) => it.variantId)));
+      const { data: varRows, error: varErr } = await client
+        .from('model_variants')
+        .select('id, finished_goods_qty')
+        .in('id', varIds);
+      if (varErr) throw varErr;
+      const varMap = new Map((varRows || []).map((v) => [v.id, Number(v.finished_goods_qty) || 0]));
+
+      for (const it of currentOrder.items) {
+        const curQty = varMap.get(it.variantId);
+        if (curQty === undefined) continue;
+        const nextQty = curQty + it.quantity;
+        varMap.set(it.variantId, nextQty);
+        const { error: uErr } = await client
+          .from('model_variants')
+          .update({ finished_goods_qty: nextQty })
+          .eq('id', it.variantId);
+        if (uErr) throw uErr;
+
+        await client.from('inventory_movements').insert({
+          item_type: 'finished_good',
+          variant_id: it.variantId,
+          movement_type: 'sale_return',
+          qty_delta: it.quantity,
+          unit_cost: it.unitCogsSnapshot || 0,
+          reference_type: 'sales_order',
+          reference_id: saleId,
+          notes: `إرجاع مخزون — إلغاء طلب بيع ${currentOrder.orderNumber}`,
+        });
+      }
+    }
+
+    if ((currentOrder?.paidAmount || 0) > 0) {
+      await client.from('financial_transactions').insert({
+        tx_type: 'refund',
+        amount: Math.round((currentOrder?.paidAmount || 0) * 100) / 100,
+        customer_id: currentOrder?.customerId || null,
+        reference_type: 'sales_order',
+        reference_id: saleId,
+        payment_method: 'تحويل',
+        notes: `إلغاء طلب بيع ${currentOrder?.orderNumber || ''}`,
+      });
+    }
+
+    const { error: updErr } = await client
+      .from('sales_orders')
+      .update({ status: 'cancelled', fulfillment_status: 'ملغي' })
+      .eq('id', saleId);
+    if (updErr) throw updErr;
+  },
+
+  async deleteSalesOrder(
+    saleId: string,
+    currentOrder?: Pick<SalesOrder, 'orderNumber' | 'status' | 'items'>
+  ) {
+    const client = db();
+    const { error } = await client.rpc('delete_sales_order', { p_sale_id: saleId });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('delete_sales_order');
+    if (!missingFn) throw error;
+
+    // Seamless fallback if Migration 015 hasn't been executed yet in Supabase
+    const status = currentOrder?.status;
+    const shouldRestoreStock =
+      status === 'confirmed' || status === 'shipped' || status === 'delivered';
+
+    if (shouldRestoreStock && currentOrder?.items?.length) {
+      const varIds = Array.from(new Set(currentOrder.items.map((it) => it.variantId)));
+      const { data: varRows, error: varErr } = await client
+        .from('model_variants')
+        .select('id, finished_goods_qty')
+        .in('id', varIds);
+      if (varErr) throw varErr;
+      const varMap = new Map((varRows || []).map((v) => [v.id, Number(v.finished_goods_qty) || 0]));
+
+      for (const it of currentOrder.items) {
+        const curQty = varMap.get(it.variantId);
+        if (curQty === undefined) continue;
+        const nextQty = curQty + it.quantity;
+        varMap.set(it.variantId, nextQty);
+        const { error: uErr } = await client
+          .from('model_variants')
+          .update({ finished_goods_qty: nextQty })
+          .eq('id', it.variantId);
+        if (uErr) throw uErr;
+
+        await client.from('inventory_movements').insert({
+          item_type: 'finished_good',
+          variant_id: it.variantId,
+          movement_type: 'sale_return',
+          qty_delta: it.quantity,
+          unit_cost: it.unitCogsSnapshot || 0,
+          reference_type: 'sales_order',
+          reference_id: saleId,
+          notes: `عكس مبيعات — حذف طلب بيع ${currentOrder.orderNumber}`,
+        });
+      }
+    }
+
+    await client
+      .from('financial_transactions')
+      .delete()
+      .eq('reference_type', 'sales_order')
+      .eq('reference_id', saleId);
+
+    const { error: delErr } = await client.from('sales_orders').delete().eq('id', saleId);
+    if (delErr) throw delErr;
+  },
 };

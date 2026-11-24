@@ -1,5 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { Banknote, CheckCircle2, Plus, Receipt, Trash2, TrendingUp } from 'lucide-react';
+import {
+  Banknote,
+  CheckCircle2,
+  Plus,
+  Receipt,
+  Trash2,
+  TrendingUp,
+  XCircle,
+} from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
 import type { SalesChannel, SalesOrder } from '../../types/erp';
@@ -15,9 +23,12 @@ export const SalesView: React.FC = () => {
     confirmSalesOrder,
     recordSalesPayment,
     updateSalesFulfillment,
+    cancelSalesOrder,
+    deleteSalesOrder,
   } = useERP();
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [busySaleId, setBusySaleId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
   const [platform, setPlatform] = useState('واتساب');
@@ -34,6 +45,19 @@ export const SalesView: React.FC = () => {
   const [paymentOrder, setPaymentOrder] = useState<SalesOrder | null>(null);
   const [paymentValue, setPaymentValue] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState('تحويل');
+
+  const runSaleAction = async (saleId: string, fn: () => Promise<void>) => {
+    setBusySaleId(saleId);
+    try {
+      await fn();
+    } catch {
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } finally {
+      setBusySaleId(null);
+    }
+  };
 
   const allVariants = useMemo(
     () =>
@@ -99,6 +123,7 @@ export const SalesView: React.FC = () => {
   };
 
   const confirmedOrders = state.salesOrders.filter((s) => s.status !== 'cancelled');
+  const cancelledOrdersCount = state.salesOrders.filter((s) => s.status === 'cancelled').length;
   const netRevenue = confirmedOrders.reduce(
     (s, o) => s + (o.subtotal - o.discountAmount),
     0
@@ -119,7 +144,8 @@ export const SalesView: React.FC = () => {
             {formatMoney(netRevenue, state.currency)}
           </div>
           <div className="text-[11px] text-[#6E6C66] mt-0.5">
-            {confirmedOrders.length} طلب
+            {confirmedOrders.length} طلب نشط
+            {cancelledOrdersCount > 0 ? ` • ${cancelledOrdersCount} ملغي` : ''}
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-[#E5E3DD] p-3.5 sm:p-4">
@@ -175,104 +201,154 @@ export const SalesView: React.FC = () => {
 
         {/* Mobile Cards */}
         <div className="md:hidden divide-y divide-[#F0EFEA]">
-          {state.salesOrders.map((so) => (
-            <div key={so.id} className="p-4 space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono font-bold text-xs text-[#1A1A1E]">
-                      {so.orderNumber}
-                    </span>
-                    <span className="text-[11px] text-[#6E6C66] tabular-nums">{so.orderDate}</span>
-                  </div>
-                  <div className="font-bold text-sm text-[#1A1A1E] mt-0.5 truncate">
-                    {so.customerName}
-                  </div>
-                  <div className="text-[11px] text-[#6E6C66] truncate">
-                    {so.platform} {so.notes ? `• ${so.notes}` : ''}
-                  </div>
-                </div>
-                <span
-                  className={`inline-flex shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                    so.paymentStatus === 'مدفوع بالكامل'
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : so.paymentStatus === 'دفع جزئي'
-                      ? 'bg-amber-50 text-amber-800'
-                      : 'bg-red-50 text-red-700'
-                  }`}
-                >
-                  {so.paymentStatus}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
-                <div>
-                  <div className="text-[10px] text-[#6E6C66]">الإجمالي</div>
-                  <div className="font-bold tabular-nums mt-0.5">
-                    {formatMoney(so.totalAmount, state.currency)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-[#6E6C66]">المدفوع</div>
-                  <div className="font-semibold text-emerald-700 tabular-nums mt-0.5">
-                    {formatMoney(so.paidAmount, state.currency)}
-                  </div>
-                  {so.remainingDebt > 0 && (
-                    <div className="text-[10px] text-red-600 font-bold tabular-nums">
-                      متبقي: {formatMoney(so.remainingDebt, state.currency)}
+          {state.salesOrders.map((so) => {
+            const isCancelled = so.status === 'cancelled';
+            const isBusy = busySaleId === so.id;
+            return (
+              <div
+                key={so.id}
+                className={`p-4 space-y-3 ${isCancelled ? 'opacity-65 bg-[#FAF9F7]/60' : ''}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className={`font-mono font-bold text-xs ${
+                          isCancelled ? 'line-through text-[#6E6C66]' : 'text-[#1A1A1E]'
+                        }`}
+                      >
+                        {so.orderNumber}
+                      </span>
+                      <span className="text-[11px] text-[#6E6C66] tabular-nums">{so.orderDate}</span>
                     </div>
-                  )}
+                    <div
+                      className={`font-bold text-sm mt-0.5 truncate ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : 'text-[#1A1A1E]'
+                      }`}
+                    >
+                      {so.customerName}
+                    </div>
+                    <div className="text-[11px] text-[#6E6C66] truncate">
+                      {so.platform} {so.notes ? `• ${so.notes}` : ''}
+                    </div>
+                  </div>
+                  <span
+                    className={`inline-flex shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                      isCancelled
+                        ? 'bg-red-50 text-red-700'
+                        : so.paymentStatus === 'مدفوع بالكامل'
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : so.paymentStatus === 'دفع جزئي'
+                        ? 'bg-amber-50 text-amber-800'
+                        : 'bg-red-50 text-red-700'
+                    }`}
+                  >
+                    {isCancelled ? 'ملغي' : so.paymentStatus}
+                  </span>
                 </div>
-                <div>
-                  <div className="text-[10px] text-[#6E6C66]">الربح</div>
-                  <div className="font-bold text-[#8E6742] tabular-nums mt-0.5">
-                    {formatMoney(so.grossProfit, state.currency)}
+
+                <div className="grid grid-cols-3 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">الإجمالي</div>
+                    <div
+                      className={`font-bold tabular-nums mt-0.5 ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : ''
+                      }`}
+                    >
+                      {formatMoney(so.totalAmount, state.currency)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">المدفوع</div>
+                    <div className="font-semibold text-emerald-700 tabular-nums mt-0.5">
+                      {formatMoney(so.paidAmount, state.currency)}
+                    </div>
+                    {!isCancelled && so.remainingDebt > 0 && (
+                      <div className="text-[10px] text-red-600 font-bold tabular-nums">
+                        متبقي: {formatMoney(so.remainingDebt, state.currency)}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">الربح</div>
+                    <div className="font-bold text-[#8E6742] tabular-nums mt-0.5">
+                      {formatMoney(so.grossProfit, state.currency)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {isCancelled ? (
+                    <span className="inline-flex px-2.5 py-1 rounded-lg bg-red-50 text-red-700 text-xs font-semibold">
+                      طلب ملغي
+                    </span>
+                  ) : (
+                    <select
+                      value={so.fulfillmentStatus}
+                      onChange={(e) => void updateSalesFulfillment(so.id, e.target.value)}
+                      aria-label="حالة التسليم"
+                      className="rounded-xl border border-[#E5E3DD] bg-white px-3 py-1.5 text-xs font-semibold"
+                    >
+                      {FULFILLMENT_STATES.map((st) => (
+                        <option key={st} value={st}>
+                          {st}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {!isCancelled && so.status === 'draft' && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runSaleAction(so.id, () => confirmSalesOrder(so.id))}
+                        className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-xl cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
+                        تأكيد
+                      </button>
+                    )}
+                    {!isCancelled && so.remainingDebt > 0 && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => {
+                          setPaymentOrder(so);
+                          setPaymentValue(so.remainingDebt);
+                        }}
+                        className="inline-flex items-center gap-1 text-xs font-bold bg-[#F6EFE7] text-[#8E6742] hover:bg-[#EDE0D1] px-3 py-1.5 rounded-xl cursor-pointer disabled:opacity-50"
+                      >
+                        <Banknote className="w-3.5 h-3.5" />
+                        تحصيل دفعة
+                      </button>
+                    )}
+                    {!isCancelled && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runSaleAction(so.id, () => cancelSalesOrder(so.id))}
+                        className="inline-flex items-center gap-1 text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        إلغاء
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => void runSaleAction(so.id, () => deleteSalesOrder(so.id))}
+                      aria-label="حذف الطلب"
+                      className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      حذف
+                    </button>
                   </div>
                 </div>
               </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <select
-                  value={so.fulfillmentStatus}
-                  onChange={(e) => void updateSalesFulfillment(so.id, e.target.value)}
-                  aria-label="حالة التسليم"
-                  className="rounded-xl border border-[#E5E3DD] bg-white px-3 py-1.5 text-xs font-semibold"
-                >
-                  {FULFILLMENT_STATES.map((st) => (
-                    <option key={st} value={st}>
-                      {st}
-                    </option>
-                  ))}
-                </select>
-
-                <div className="flex items-center gap-2">
-                  {so.status === 'draft' && (
-                    <button
-                      type="button"
-                      onClick={() => void confirmSalesOrder(so.id)}
-                      className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-xl cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
-                      تأكيد
-                    </button>
-                  )}
-                  {so.remainingDebt > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPaymentOrder(so);
-                        setPaymentValue(so.remainingDebt);
-                      }}
-                      className="inline-flex items-center gap-1 text-xs font-bold bg-[#F6EFE7] text-[#8E6742] hover:bg-[#EDE0D1] px-3 py-1.5 rounded-xl cursor-pointer"
-                    >
-                      <Banknote className="w-3.5 h-3.5" />
-                      تحصيل دفعة
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {state.salesOrders.length === 0 && (
             <div className="py-8 text-center text-xs text-[#6E6C66]">
               لا توجد طلبات بيع مسجلة بعد.
@@ -296,89 +372,153 @@ export const SalesView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0EFEA]">
-              {state.salesOrders.map((so) => (
-                <tr key={so.id} className="hover:bg-[#FAF9F7]">
-                  <td className="py-3 px-3.5">
-                    <div className="font-mono font-bold text-xs">{so.orderNumber}</div>
-                    <div className="text-[11px] text-[#6E6C66] tabular-nums">{so.orderDate}</div>
-                  </td>
-                  <td className="py-3 px-3.5">
-                    <div className="font-semibold text-[#1A1A1E]">{so.customerName}</div>
-                    <div className="text-[11px] text-[#6E6C66] truncate max-w-[200px]">
-                      {so.platform} {so.notes ? `• ${so.notes}` : ''}
-                    </div>
-                  </td>
-                  <td className="py-3 px-3.5 tabular-nums font-bold">
-                    {formatMoney(so.totalAmount, state.currency)}
-                  </td>
-                  <td className="py-3 px-3.5 tabular-nums text-xs">
-                    <div className="text-emerald-700 font-semibold">
-                      مدفوع: {formatMoney(so.paidAmount, state.currency)}
-                    </div>
-                    {so.remainingDebt > 0 && (
-                      <div className="text-red-600 font-bold">
-                        متبقي: {formatMoney(so.remainingDebt, state.currency)}
+              {state.salesOrders.map((so) => {
+                const isCancelled = so.status === 'cancelled';
+                const isBusy = busySaleId === so.id;
+                return (
+                  <tr
+                    key={so.id}
+                    className={`hover:bg-[#FAF9F7] ${
+                      isCancelled ? 'opacity-65 bg-[#FAF9F7]/50' : ''
+                    }`}
+                  >
+                    <td className="py-3 px-3.5">
+                      <div
+                        className={`font-mono font-bold text-xs ${
+                          isCancelled ? 'line-through text-[#6E6C66]' : ''
+                        }`}
+                      >
+                        {so.orderNumber}
                       </div>
-                    )}
-                  </td>
-                  <td className="py-3 px-3.5">
-                    <span
-                      className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                        so.paymentStatus === 'مدفوع بالكامل'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : so.paymentStatus === 'دفع جزئي'
-                          ? 'bg-amber-50 text-amber-800'
-                          : 'bg-red-50 text-red-700'
+                      <div className="text-[11px] text-[#6E6C66] tabular-nums">{so.orderDate}</div>
+                    </td>
+                    <td className="py-3 px-3.5">
+                      <div
+                        className={`font-semibold ${
+                          isCancelled ? 'line-through text-[#6E6C66]' : 'text-[#1A1A1E]'
+                        }`}
+                      >
+                        {so.customerName}
+                      </div>
+                      <div className="text-[11px] text-[#6E6C66] truncate max-w-[200px]">
+                        {so.platform} {so.notes ? `• ${so.notes}` : ''}
+                      </div>
+                    </td>
+                    <td
+                      className={`py-3 px-3.5 tabular-nums font-bold ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : ''
                       }`}
                     >
-                      {so.paymentStatus}
-                    </span>
-                  </td>
-                  <td className="py-3 px-3.5">
-                    <select
-                      value={so.fulfillmentStatus}
-                      onChange={(e) => void updateSalesFulfillment(so.id, e.target.value)}
-                      className="rounded-lg border border-[#E5E3DD] bg-white px-2 py-1 text-xs font-semibold"
-                    >
-                      {FULFILLMENT_STATES.map((st) => (
-                        <option key={st} value={st}>
-                          {st}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="py-3 px-3.5 tabular-nums font-bold text-[#8E6742]">
-                    {formatMoney(so.grossProfit, state.currency)}
-                  </td>
-                  <td className="py-3 px-3.5">
-                    <div className="flex items-center gap-1.5">
-                      {so.status === 'draft' && (
+                      {formatMoney(so.totalAmount, state.currency)}
+                    </td>
+                    <td className="py-3 px-3.5 tabular-nums text-xs">
+                      <div className="text-emerald-700 font-semibold">
+                        مدفوع: {formatMoney(so.paidAmount, state.currency)}
+                      </div>
+                      {!isCancelled && so.remainingDebt > 0 && (
+                        <div className="text-red-600 font-bold">
+                          متبقي: {formatMoney(so.remainingDebt, state.currency)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3 px-3.5">
+                      <span
+                        className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                          isCancelled
+                            ? 'bg-red-50 text-red-700'
+                            : so.paymentStatus === 'مدفوع بالكامل'
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : so.paymentStatus === 'دفع جزئي'
+                            ? 'bg-amber-50 text-amber-800'
+                            : 'bg-red-50 text-red-700'
+                        }`}
+                      >
+                        {isCancelled ? 'ملغي' : so.paymentStatus}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3.5">
+                      {isCancelled ? (
+                        <span className="inline-flex px-2 py-0.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold">
+                          ملغي
+                        </span>
+                      ) : (
+                        <select
+                          value={so.fulfillmentStatus}
+                          onChange={(e) => void updateSalesFulfillment(so.id, e.target.value)}
+                          className="rounded-lg border border-[#E5E3DD] bg-white px-2 py-1 text-xs font-semibold"
+                        >
+                          {FULFILLMENT_STATES.map((st) => (
+                            <option key={st} value={st}>
+                              {st}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </td>
+                    <td className="py-3 px-3.5 tabular-nums font-bold text-[#8E6742]">
+                      {formatMoney(so.grossProfit, state.currency)}
+                    </td>
+                    <td className="py-3 px-3.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {!isCancelled && so.status === 'draft' && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runSaleAction(so.id, () => confirmSalesOrder(so.id))}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold bg-[#1A1A1E] text-white px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50"
+                          >
+                            <CheckCircle2 className="w-3 h-3 text-[#BD956D]" />
+                            تأكيد
+                          </button>
+                        )}
+                        {!isCancelled && so.remainingDebt > 0 && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => {
+                              setPaymentOrder(so);
+                              setPaymentValue(so.remainingDebt);
+                            }}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold bg-[#F6EFE7] text-[#8E6742] hover:bg-[#EDE0D1] px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-50"
+                          >
+                            <Banknote className="w-3 h-3" />
+                            تحصيل دفعة
+                          </button>
+                        )}
+                        {!isCancelled && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runSaleAction(so.id, () => cancelSalesOrder(so.id))}
+                            title="إلغاء الطلب وإرجاع المخزون"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 px-2 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <XCircle className="w-3 h-3" />
+                            إلغاء
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => void confirmSalesOrder(so.id)}
-                          className="inline-flex items-center gap-1 text-[11px] font-bold bg-[#1A1A1E] text-white px-2.5 py-1 rounded-lg cursor-pointer"
+                          disabled={isBusy}
+                          onClick={() => void runSaleAction(so.id, () => deleteSalesOrder(so.id))}
+                          title="حذف الطلب نهائياً"
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                         >
-                          <CheckCircle2 className="w-3 h-3 text-[#BD956D]" />
-                          تأكيد
+                          <Trash2 className="w-3 h-3" />
+                          حذف
                         </button>
-                      )}
-                      {so.remainingDebt > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaymentOrder(so);
-                            setPaymentValue(so.remainingDebt);
-                          }}
-                          className="inline-flex items-center gap-1 text-[11px] font-bold bg-[#F6EFE7] text-[#8E6742] hover:bg-[#EDE0D1] px-2.5 py-1 rounded-lg cursor-pointer"
-                        >
-                          <Banknote className="w-3 h-3" />
-                          تحصيل دفعة
-                        </button>
-                      )}
-                    </div>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {state.salesOrders.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="py-10 text-center text-xs text-[#6E6C66]">
+                    لا توجد طلبات بيع مسجلة بعد.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

@@ -180,6 +180,8 @@ interface ERPContextValue {
   confirmSalesOrder: (saleId: string) => Promise<void>;
   recordSalesPayment: (saleId: string, amount: number, method?: string) => Promise<void>;
   updateSalesFulfillment: (saleId: string, status: string) => Promise<void>;
+  cancelSalesOrder: (saleId: string) => Promise<void>;
+  deleteSalesOrder: (saleId: string) => Promise<void>;
 
   // Data management
   importFullJSON: (data: ERPState) => void;
@@ -1745,6 +1747,151 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const cancelSalesOrder = async (saleId: string) => {
+    const so = state.salesOrders.find((s) => s.id === saleId);
+    if (!so || so.status === 'cancelled') return;
+
+    const wasDeducted =
+      so.status === 'confirmed' || so.status === 'shipped' || so.status === 'delivered';
+    const detailParts: string[] = [];
+    if (wasDeducted) {
+      detailParts.push('سيتم إرجاع القطع المصروفة لهذا الطلب إلى مخزون المنتج التام تلقائياً.');
+    }
+    if ((so.paidAmount || 0) > 0) {
+      detailParts.push(
+        `سيتم استبعاد المبلغ المحصّل (${formatMoney(
+          so.paidAmount,
+          state.currency
+        )}) من إجمالي المبيعات ورصيد الخزنة وحساب العميل.`
+      );
+    }
+    if (detailParts.length === 0) {
+      detailParts.push('سيتم تحويل حالة الطلب إلى «ملغي» مع الاحتفاظ به في السجل.');
+    }
+
+    const ok = await confirmAction({
+      title: 'تأكيد إلغاء طلب العميل',
+      message: `هل أنت متأكد من إلغاء الطلب «${so.orderNumber}» للعميل «${
+        so.customerName
+      }» بقيمة ${formatMoney(so.totalAmount, state.currency)}؟`,
+      detail: detailParts.join(' '),
+      confirmLabel: 'نعم، إلغاء الطلب',
+      tone: 'warning',
+    });
+    if (!ok) return;
+
+    if (cloudConnected) {
+      await runCloud(() =>
+        erpDb.cancelSalesOrder(saleId, {
+          orderNumber: so.orderNumber,
+          status: so.status,
+          paidAmount: so.paidAmount,
+          customerId: so.customerId,
+          items: so.items,
+        })
+      );
+      return;
+    }
+
+    setState((prev) => {
+      const target = prev.salesOrders.find((s) => s.id === saleId);
+      if (!target || target.status === 'cancelled') return prev;
+      const restoreStock =
+        target.status === 'confirmed' ||
+        target.status === 'shipped' ||
+        target.status === 'delivered';
+
+      return {
+        ...prev,
+        models: restoreStock
+          ? prev.models.map((m) => ({
+              ...m,
+              variants: m.variants.map((v) => {
+                const qtyBack = target.items
+                  .filter((it) => it.variantId === v.id)
+                  .reduce((sum, it) => sum + it.quantity, 0);
+                return qtyBack > 0
+                  ? { ...v, finishedGoodsQty: v.finishedGoodsQty + qtyBack }
+                  : v;
+              }),
+            }))
+          : prev.models,
+        salesOrders: prev.salesOrders.map((s) =>
+          s.id === saleId ? { ...s, status: 'cancelled', fulfillmentStatus: 'ملغي' } : s
+        ),
+      };
+    });
+  };
+
+  const deleteSalesOrder = async (saleId: string) => {
+    const so = state.salesOrders.find((s) => s.id === saleId);
+    if (!so) return;
+
+    const wasDeducted =
+      so.status === 'confirmed' || so.status === 'shipped' || so.status === 'delivered';
+    const detailParts: string[] = [];
+    if (wasDeducted) {
+      detailParts.push('سيتم إرجاع القطع المباعة في هذا الطلب إلى مخزون المنتج التام تلقائياً.');
+    }
+    if ((so.paidAmount || 0) > 0 && so.status !== 'cancelled') {
+      detailParts.push(
+        `سيتم حذف المدفوعات المرتبطة بالطلب (${formatMoney(
+          so.paidAmount,
+          state.currency
+        )}) من المبيعات ورصيد الخزنة.`
+      );
+    }
+    detailParts.push('سيُحذف الطلب نهائياً ولا يمكن التراجع عن هذا الإجراء.');
+
+    const ok = await confirmAction({
+      title: 'تأكيد حذف طلب العميل نهائياً',
+      message: `هل أنت متأكد من حذف الطلب «${so.orderNumber}» للعميل «${
+        so.customerName
+      }» بقيمة ${formatMoney(so.totalAmount, state.currency)}؟`,
+      detail: detailParts.join(' '),
+      confirmLabel: 'نعم، احذف الطلب نهائياً',
+    });
+    if (!ok) return;
+
+    if (cloudConnected) {
+      await runCloud(() =>
+        erpDb.deleteSalesOrder(saleId, {
+          orderNumber: so.orderNumber,
+          status: so.status,
+          items: so.items,
+        })
+      );
+      return;
+    }
+
+    setState((prev) => {
+      const target = prev.salesOrders.find((s) => s.id === saleId);
+      if (!target) return prev;
+      const restoreStock =
+        target.status === 'confirmed' ||
+        target.status === 'shipped' ||
+        target.status === 'delivered';
+
+      return {
+        ...prev,
+        models: restoreStock
+          ? prev.models.map((m) => ({
+              ...m,
+              variants: m.variants.map((v) => {
+                const qtyBack = target.items
+                  .filter((it) => it.variantId === v.id)
+                  .reduce((sum, it) => sum + it.quantity, 0);
+                return qtyBack > 0
+                  ? { ...v, finishedGoodsQty: v.finishedGoodsQty + qtyBack }
+                  : v;
+              }),
+            }))
+          : prev.models,
+        salesOrders: prev.salesOrders.filter((s) => s.id !== saleId),
+      };
+    });
+  };
+
   const importFullJSON = (data: ERPState) => {
     setState(data);
     setSelectedModelId(data.models[0]?.id ?? null);
@@ -1831,6 +1978,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         confirmSalesOrder,
         recordSalesPayment,
         updateSalesFulfillment,
+        cancelSalesOrder,
+        deleteSalesOrder,
         importFullJSON,
         resetToSeedData,
         lastSavedAt,
