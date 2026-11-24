@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CheckCircle2, PackagePlus, Plus, ShoppingBag, Trash2, XCircle } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { CURRENCIES } from '../../types/erp';
 import {
   FABRIC_UNIT_LABELS,
   formatMoney,
@@ -421,7 +422,7 @@ export const PurchasesView: React.FC = () => {
         onClose={() => setModalOpen(false)}
         title="إنشاء أمر شراء خامات / كلف"
         subtitle="عند الاستلام يتم زيادة رصيد المخزون وإعادة حساب متوسط التكلفة المرجّح تلقائياً في PostgreSQL"
-        maxWidthClass="max-w-2xl"
+        maxWidthClass="max-w-3xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -456,7 +457,7 @@ export const PurchasesView: React.FC = () => {
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold">بنود الفاتورة:</span>
               <div className="flex gap-2">
@@ -477,76 +478,133 @@ export const PurchasesView: React.FC = () => {
               </div>
             </div>
 
-            {lines.map((line, idx) => (
-              <div
-                key={idx}
-                className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-[#FAF9F7] p-2.5 rounded-xl border border-[#EAE8E2]"
-              >
-                <select
-                  value={line.refId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    const price =
-                      line.itemType === 'fabric'
-                        ? state.fabrics.find((f) => f.id === id)?.pricePerUnit || 0
-                        : state.trims.find((t) => t.id === id)?.packPrice || 0;
-                    setLines((prev) =>
-                      prev.map((l, i) => (i === idx ? { ...l, refId: id, unitPrice: price } : l))
-                    );
-                  }}
-                  className="sm:col-span-5 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs"
+            {lines.map((line, idx) => {
+              const currencySymbol = CURRENCIES[state.currency]?.symbol || 'ج.م';
+              const unitLabel =
+                line.itemType === 'fabric'
+                  ? FABRIC_UNIT_LABELS[
+                      state.fabrics.find((f) => f.id === line.refId)?.unit || 'meter'
+                    ]
+                  : PURCHASE_UNIT_LABELS[
+                      state.trims.find((t) => t.id === line.refId)?.purchaseUnit || 'piece'
+                    ];
+              const lineTotal = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+
+              return (
+                <div
+                  key={idx}
+                  className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end bg-[#FAF9F7] p-3 rounded-xl border border-[#EAE8E2]"
                 >
-                  {line.itemType === 'fabric'
-                    ? state.fabrics.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name} ({FABRIC_UNIT_LABELS[f.unit]})
-                        </option>
-                      ))
-                    : state.trims.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name} ({PURCHASE_UNIT_LABELS[t.purchaseUnit]})
-                        </option>
-                      ))}
-                </select>
-                <input
-                  type="number"
-                  min="1"
-                  step="0.5"
-                  value={line.quantity}
-                  onChange={(e) =>
-                    setLines((prev) =>
-                      prev.map((l, i) =>
-                        i === idx ? { ...l, quantity: Number(e.target.value) } : l
-                      )
-                    )
-                  }
-                  placeholder="الكمية"
-                  className="sm:col-span-3 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs tabular-nums"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={line.unitPrice}
-                  onChange={(e) =>
-                    setLines((prev) =>
-                      prev.map((l, i) =>
-                        i === idx ? { ...l, unitPrice: Number(e.target.value) } : l
-                      )
-                    )
-                  }
-                  placeholder="سعر الوحدة"
-                  className="sm:col-span-3 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs tabular-nums"
-                />
-                <button
-                  type="button"
-                  onClick={() => setLines((prev) => prev.filter((_, i) => i !== idx))}
-                  className="sm:col-span-1 text-[#9C9990] hover:text-red-600 flex justify-center cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+                  {/* Item Selector */}
+                  <div className="sm:col-span-4">
+                    <label className="block text-[11px] font-bold text-[#4B4A46] mb-1">
+                      {line.itemType === 'fabric' ? 'الصنف (قماش)' : 'الصنف (كلفة / عبوة)'}
+                    </label>
+                    <select
+                      value={line.refId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const price =
+                          line.itemType === 'fabric'
+                            ? state.fabrics.find((f) => f.id === id)?.pricePerUnit || 0
+                            : state.trims.find((t) => t.id === id)?.packPrice || 0;
+                        setLines((prev) =>
+                          prev.map((l, i) => (i === idx ? { ...l, refId: id, unitPrice: price } : l))
+                        );
+                      }}
+                      className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-medium text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
+                    >
+                      {line.itemType === 'fabric'
+                        ? state.fabrics.map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.name} ({FABRIC_UNIT_LABELS[f.unit]})
+                            </option>
+                          ))
+                        : state.trims.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name} ({PURCHASE_UNIT_LABELS[t.purchaseUnit]})
+                            </option>
+                          ))}
+                    </select>
+                  </div>
+
+                  {/* Quantity */}
+                  <div className="sm:col-span-3">
+                    <label className="block text-[11px] font-bold text-[#1A1A1E] mb-1">
+                      الكمية ({unitLabel})
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.5"
+                        value={line.quantity}
+                        onChange={(e) =>
+                          setLines((prev) =>
+                            prev.map((l, i) =>
+                              i === idx ? { ...l, quantity: Number(e.target.value) } : l
+                            )
+                          )
+                        }
+                        placeholder="أدخل الكمية"
+                        aria-label={`الكمية (${unitLabel})`}
+                        className="w-full rounded-lg border border-[#E5E3DD] bg-white pr-2.5 pl-12 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums focus:outline-none focus:border-[#1A1A1E]"
+                      />
+                      <span className="pointer-events-none absolute left-2 text-[10px] font-semibold text-[#6E6C66] bg-[#F3F2EE] px-1.5 py-0.5 rounded">
+                        {unitLabel}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Unit Price */}
+                  <div className="sm:col-span-3">
+                    <label className="block text-[11px] font-bold text-[#8E6742] mb-1">
+                      سعر الوحدة ({currencySymbol})
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.unitPrice}
+                        onChange={(e) =>
+                          setLines((prev) =>
+                            prev.map((l, i) =>
+                              i === idx ? { ...l, unitPrice: Number(e.target.value) } : l
+                            )
+                          )
+                        }
+                        placeholder="أدخل سعر الوحدة"
+                        aria-label={`سعر الوحدة (${currencySymbol})`}
+                        className="w-full rounded-lg border border-[#E6D5C3] bg-white pr-2.5 pl-11 py-2 text-xs font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"
+                      />
+                      <span className="pointer-events-none absolute left-2 text-[10px] font-bold text-[#8E6742] bg-[#F6EFE7] px-1.5 py-0.5 rounded">
+                        {currencySymbol}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Line Total + Delete */}
+                  <div className="sm:col-span-2 flex items-center justify-between sm:justify-end gap-2 pb-1">
+                    <div className="text-right sm:text-left">
+                      <div className="text-[10px] text-[#6E6C66]">إجمالي البند</div>
+                      <div className="text-xs font-extrabold text-[#1A1A1E] tabular-nums">
+                        {formatMoney(lineTotal, state.currency)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLines((prev) => prev.filter((_, i) => i !== idx))}
+                      title="حذف البند"
+                      aria-label="حذف البند"
+                      className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <label className="flex items-center gap-2 text-xs font-semibold text-[#1A1A1E] cursor-pointer">
