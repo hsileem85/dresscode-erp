@@ -179,7 +179,7 @@ export const ProductionView: React.FC = () => {
       '';
     setBatchWorkshopId(matchedWs);
     setBatchAgreedLabor(getOrderTotalLabor(po));
-    setLaborManuallyEdited(true);
+    setLaborManuallyEdited(false);
     setBatchAdvance(0);
     setBatchPayMethod('كاش');
     setBatchNotes(po.notes || '');
@@ -202,7 +202,14 @@ export const ProductionView: React.FC = () => {
     setVariantQtyMap(nextMap);
     if (!laborManuallyEdited) {
       const totalPieces = Object.values(nextMap).reduce((s, q) => s + (Number(q) || 0), 0);
-      const unitLabor = getModelLaborPerPiece(selectedModelId);
+      const useBatchRate =
+        editingBatch &&
+        editingBatch.modelId === selectedModelId &&
+        editingBatch.plannedQty > 0 &&
+        getOrderTotalLabor(editingBatch) > 0;
+      const unitLabor = useBatchRate
+        ? getOrderTotalLabor(editingBatch) / editingBatch.plannedQty
+        : getModelLaborPerPiece(selectedModelId);
       setBatchAgreedLabor(Math.round(totalPieces * unitLabor * 100) / 100);
     }
   };
@@ -1216,6 +1223,7 @@ export const ProductionView: React.FC = () => {
                   type="button"
                   onClick={() => {
                     const unitLabor = getModelLaborPerPiece(selectedModelId);
+                    setLaborManuallyEdited(false);
                     setBatchAgreedLabor(Math.round(totalDraftBatchQty * unitLabor * 100) / 100);
                   }}
                   className="text-[11px] font-semibold text-[#8E6742] hover:underline cursor-pointer"
