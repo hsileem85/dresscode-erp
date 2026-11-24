@@ -357,6 +357,7 @@ export async function fetchFullERPState(): Promise<{
     orderDate: po.order_date,
     receivedAt: po.received_at,
     status: po.status,
+    shippingCost: Number(po.shipping_cost) || 0,
     totalAmount: Number(po.total_amount) || 0,
     paidAmount: Number(po.paid_amount) || 0,
     notes: po.notes || '',
@@ -371,6 +372,7 @@ export async function fetchFullERPState(): Promise<{
         quantity: Number(it.quantity) || 0,
         unitsPerPack: Number(it.units_per_pack) || 1,
         unitPrice: Number(it.unit_price) || 0,
+        shippingAllocated: Number(it.shipping_allocated) || 0,
         lineTotal: Number(it.line_total) || 0,
       })),
   }));
@@ -903,6 +905,7 @@ export const erpDb = {
     poNumber: string;
     supplierId?: string | null;
     supplierName: string;
+    shippingCost?: number;
     notes?: string;
     items: {
       itemType: 'fabric' | 'trim';
@@ -912,24 +915,73 @@ export const erpDb = {
       quantity: number;
       unitsPerPack: number;
       unitPrice: number;
+      shippingAllocated?: number;
     }[];
   }) {
     const client = db();
     const id = newUuid();
-    const total = po.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const shipping = Math.max(0, Math.round((Number(po.shippingCost) || 0) * 100) / 100);
+    const itemsSubtotal = po.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const total = Math.round((itemsSubtotal + shipping) * 100) / 100;
+
+    const isMissingShippingCol = (err: { code?: string; message?: string } | null) =>
+      !!err &&
+      (err.code === '42703' ||
+        err.code === 'PGRST204' ||
+        err.message?.includes('shipping_cost') ||
+        err.message?.includes('shipping_allocated'));
+
     const { error: poErr } = await client.from('purchase_orders').insert({
       id,
       po_number: po.poNumber,
       supplier_id: po.supplierId || null,
       supplier_name: po.supplierName,
       status: 'ordered',
+      shipping_cost: shipping,
       total_amount: total,
       notes: po.notes || null,
     });
-    if (poErr) throw poErr;
 
-    const { error: itemsErr } = await client.from('purchase_order_items').insert(
-      po.items.map((it) => ({
+    if (!poErr) {
+      const { error: itemsErr } = await client.from('purchase_order_items').insert(
+        po.items.map((it) => ({
+          id: newUuid(),
+          purchase_order_id: id,
+          item_type: it.itemType,
+          fabric_id: it.fabricId || null,
+          trim_id: it.trimId || null,
+          description: it.description,
+          quantity: it.quantity,
+          units_per_pack: it.unitsPerPack,
+          unit_price: it.unitPrice,
+          shipping_allocated: Math.max(
+            0,
+            Math.round((Number(it.shippingAllocated) || 0) * 100) / 100
+          ),
+        }))
+      );
+      if (!itemsErr) return id;
+      if (!isMissingShippingCol(itemsErr)) throw itemsErr;
+      // Clean up header if items insert failed due to missing shipping_allocated column
+      await client.from('purchase_orders').delete().eq('id', id);
+    } else if (!isMissingShippingCol(poErr)) {
+      throw poErr;
+    }
+
+    // Fallback when migration 016 has not been executed yet:
+    // bake pro-rata shipping directly into each line's unit_price so WAC & PO total remain accurate
+    const shippingNote =
+      shipping > 0
+        ? `${po.notes ? `${po.notes} | ` : ''}شامل مصاريف شحن (${shipping}) موزعة بالتناسب`
+        : po.notes || null;
+
+    const fallbackItems = po.items.map((it) => {
+      const alloc = Math.max(0, Number(it.shippingAllocated) || 0);
+      const landedPrice =
+        it.quantity > 0
+          ? Math.round((it.unitPrice + alloc / it.quantity) * 100) / 100
+          : it.unitPrice;
+      return {
         id: newUuid(),
         purchase_order_id: id,
         item_type: it.itemType,
@@ -938,10 +990,28 @@ export const erpDb = {
         description: it.description,
         quantity: it.quantity,
         units_per_pack: it.unitsPerPack,
-        unit_price: it.unitPrice,
-      }))
-    );
-    if (itemsErr) throw itemsErr;
+        unit_price: landedPrice,
+      };
+    });
+
+    const fallbackTotal =
+      Math.round(fallbackItems.reduce((s, it) => s + it.quantity * it.unit_price, 0) * 100) / 100;
+
+    const { error: fbPoErr } = await client.from('purchase_orders').insert({
+      id,
+      po_number: po.poNumber,
+      supplier_id: po.supplierId || null,
+      supplier_name: po.supplierName,
+      status: 'ordered',
+      total_amount: fallbackTotal,
+      notes: shippingNote,
+    });
+    if (fbPoErr) throw fbPoErr;
+
+    const { error: fbItemsErr } = await client
+      .from('purchase_order_items')
+      .insert(fallbackItems);
+    if (fbItemsErr) throw fbItemsErr;
     return id;
   },
 

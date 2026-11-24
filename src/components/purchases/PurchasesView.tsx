@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { CheckCircle2, PackagePlus, Plus, ShoppingBag, Trash2, XCircle } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { CheckCircle2, PackagePlus, Plus, ShoppingBag, Trash2, Truck, XCircle } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { CURRENCIES } from '../../types/erp';
 import {
@@ -23,6 +23,10 @@ export const PurchasesView: React.FC = () => {
   const [supplierName, setSupplierName] = useState('');
   const [supplierId, setSupplierId] = useState<string>('');
   const [receiveImmediately, setReceiveImmediately] = useState(true);
+  const [shippingCost, setShippingCost] = useState<number>(0);
+  const [shippingAllocationMode, setShippingAllocationMode] = useState<
+    'fabric_qty' | 'all_value'
+  >('fabric_qty');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -42,6 +46,8 @@ export const PurchasesView: React.FC = () => {
     setSupplierId(firstSup?.id || '');
     setSupplierName(firstSup?.name || 'مورد عام');
     setReceiveImmediately(true);
+    setShippingCost(0);
+    setShippingAllocationMode('fabric_qty');
     setNotes('');
     setLines(
       state.fabrics[0]
@@ -82,6 +88,96 @@ export const PurchasesView: React.FC = () => {
     }
   };
 
+  const poCalc = useMemo(() => {
+    const safeShipping = Math.max(0, Math.round((Number(shippingCost) || 0) * 100) / 100);
+    const hasFabrics = lines.some((l) => l.itemType === 'fabric' && (Number(l.quantity) || 0) > 0);
+    const hasTrims = lines.some((l) => l.itemType === 'trim' && (Number(l.quantity) || 0) > 0);
+    const totalFabricQty = lines
+      .filter((l) => l.itemType === 'fabric')
+      .reduce((s, l) => s + Math.max(0, Number(l.quantity) || 0), 0);
+
+    const effectiveMode: 'fabric_qty' | 'all_value' =
+      shippingAllocationMode === 'fabric_qty' && totalFabricQty > 0 ? 'fabric_qty' : 'all_value';
+
+    const baseLineTotals = lines.map(
+      (l) => Math.max(0, Number(l.quantity) || 0) * Math.max(0, Number(l.unitPrice) || 0)
+    );
+    const itemsSubtotal =
+      Math.round(baseLineTotals.reduce((s, v) => s + v, 0) * 100) / 100;
+
+    // Determine pro-rata weights per line
+    const weights = lines.map((l, idx) => {
+      const qty = Math.max(0, Number(l.quantity) || 0);
+      if (effectiveMode === 'fabric_qty') {
+        return l.itemType === 'fabric' ? qty : 0;
+      }
+      return itemsSubtotal > 0 ? baseLineTotals[idx] : qty;
+    });
+    const totalWeight = weights.reduce((s, w) => s + w, 0);
+
+    // Penny-exact pro-rata allocation (remainder placed on last weighted line)
+    let lastWeightedIdx = -1;
+    for (let i = 0; i < weights.length; i += 1) {
+      if (weights[i] > 0) lastWeightedIdx = i;
+    }
+
+    let allocatedRunning = 0;
+    const allocations: {
+      baseLineTotal: number;
+      shippingAllocated: number;
+      shippingPerUnit: number;
+      landedUnitPrice: number;
+      landedLineTotal: number;
+    }[] = [];
+
+    for (let idx = 0; idx < lines.length; idx += 1) {
+      const l = lines[idx];
+      const qty = Math.max(0, Number(l.quantity) || 0);
+      const unitPrice = Math.max(0, Number(l.unitPrice) || 0);
+      const baseLineTotal = baseLineTotals[idx];
+      let shippingAllocated = 0;
+
+      if (safeShipping > 0 && totalWeight > 0 && weights[idx] > 0) {
+        if (idx === lastWeightedIdx) {
+          shippingAllocated = Math.max(
+            0,
+            Math.round((safeShipping - allocatedRunning) * 100) / 100
+          );
+        } else {
+          shippingAllocated = Math.round(((safeShipping * weights[idx]) / totalWeight) * 100) / 100;
+          allocatedRunning = Math.round((allocatedRunning + shippingAllocated) * 100) / 100;
+        }
+      }
+
+      const shippingPerUnit = qty > 0 ? shippingAllocated / qty : 0;
+      const landedUnitPrice = unitPrice + shippingPerUnit;
+      const landedLineTotal = Math.round((baseLineTotal + shippingAllocated) * 100) / 100;
+
+      allocations.push({
+        baseLineTotal,
+        shippingAllocated,
+        shippingPerUnit,
+        landedUnitPrice,
+        landedLineTotal,
+      });
+    }
+
+    const shippingPerMeter = totalFabricQty > 0 ? safeShipping / totalFabricQty : 0;
+    const grandTotal = Math.round((itemsSubtotal + safeShipping) * 100) / 100;
+
+    return {
+      safeShipping,
+      hasFabrics,
+      hasTrims,
+      totalFabricQty,
+      effectiveMode,
+      itemsSubtotal,
+      shippingPerMeter,
+      grandTotal,
+      allocations,
+    };
+  }, [lines, shippingCost, shippingAllocationMode]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (lines.length === 0) return;
@@ -90,7 +186,8 @@ export const PurchasesView: React.FC = () => {
       const poNumber = `PO-${new Date().getFullYear()}-${String(
         state.purchaseOrders.length + 1
       ).padStart(3, '0')}`;
-      const items = lines.map((line) => {
+      const items = lines.map((line, idx) => {
+        const shippingAllocated = poCalc.allocations[idx]?.shippingAllocated || 0;
         if (line.itemType === 'fabric') {
           const fab = state.fabrics.find((f) => f.id === line.refId);
           return {
@@ -101,6 +198,7 @@ export const PurchasesView: React.FC = () => {
             quantity: line.quantity,
             unitsPerPack: 1,
             unitPrice: line.unitPrice,
+            shippingAllocated,
           };
         }
         const trim = state.trims.find((t) => t.id === line.refId);
@@ -112,6 +210,7 @@ export const PurchasesView: React.FC = () => {
           quantity: line.quantity,
           unitsPerPack: trim?.unitsPerPack || 1,
           unitPrice: line.unitPrice,
+          shippingAllocated,
         };
       });
 
@@ -120,6 +219,7 @@ export const PurchasesView: React.FC = () => {
         supplierId: supplierId || null,
         supplierName: supplierName.trim() || 'مورد عام',
         receiveImmediately,
+        shippingCost: poCalc.safeShipping,
         notes,
         items,
       });
@@ -264,13 +364,20 @@ export const PurchasesView: React.FC = () => {
                   {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span
-                    className={`text-sm font-extrabold tabular-nums ${
-                      isCancelled ? 'line-through text-[#6E6C66]' : 'text-[#1A1A1E]'
-                    }`}
-                  >
-                    {formatMoney(po.totalAmount, state.currency)}
-                  </span>
+                  <div>
+                    <span
+                      className={`text-sm font-extrabold tabular-nums ${
+                        isCancelled ? 'line-through text-[#6E6C66]' : 'text-[#1A1A1E]'
+                      }`}
+                    >
+                      {formatMoney(po.totalAmount, state.currency)}
+                    </span>
+                    {Boolean(po.shippingCost && po.shippingCost > 0) && (
+                      <div className="text-[10px] font-semibold text-[#8E6742] tabular-nums">
+                        شامل شحن {formatMoney(po.shippingCost || 0, state.currency)}
+                      </div>
+                    )}
+                  </div>
                   {!isCancelled && (
                     <div className="flex items-center gap-1.5">
                       {!isReceived && (
@@ -354,7 +461,12 @@ export const PurchasesView: React.FC = () => {
                         isCancelled ? 'line-through text-[#6E6C66]' : ''
                       }`}
                     >
-                      {formatMoney(po.totalAmount, state.currency)}
+                      <div>{formatMoney(po.totalAmount, state.currency)}</div>
+                      {Boolean(po.shippingCost && po.shippingCost > 0) && (
+                        <div className="text-[10px] font-semibold text-[#8E6742] mt-0.5">
+                          شامل شحن {formatMoney(po.shippingCost || 0, state.currency)}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <span
@@ -488,123 +600,250 @@ export const PurchasesView: React.FC = () => {
                   : PURCHASE_UNIT_LABELS[
                       state.trims.find((t) => t.id === line.refId)?.purchaseUnit || 'piece'
                     ];
-              const lineTotal = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+              const alloc = poCalc.allocations[idx] || {
+                baseLineTotal: (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0),
+                shippingAllocated: 0,
+                shippingPerUnit: 0,
+                landedUnitPrice: Number(line.unitPrice) || 0,
+                landedLineTotal: (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0),
+              };
 
               return (
                 <div
                   key={idx}
-                  className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end bg-[#FAF9F7] p-3 rounded-xl border border-[#EAE8E2]"
+                  className="bg-[#FAF9F7] p-3 rounded-xl border border-[#EAE8E2] space-y-2"
                 >
-                  {/* Item Selector */}
-                  <div className="sm:col-span-4">
-                    <label className="block text-[11px] font-bold text-[#4B4A46] mb-1">
-                      {line.itemType === 'fabric' ? 'الصنف (قماش)' : 'الصنف (كلفة / عبوة)'}
-                    </label>
-                    <select
-                      value={line.refId}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        const price =
-                          line.itemType === 'fabric'
-                            ? state.fabrics.find((f) => f.id === id)?.pricePerUnit || 0
-                            : state.trims.find((t) => t.id === id)?.packPrice || 0;
-                        setLines((prev) =>
-                          prev.map((l, i) => (i === idx ? { ...l, refId: id, unitPrice: price } : l))
-                        );
-                      }}
-                      className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-medium text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
-                    >
-                      {line.itemType === 'fabric'
-                        ? state.fabrics.map((f) => (
-                            <option key={f.id} value={f.id}>
-                              {f.name} ({FABRIC_UNIT_LABELS[f.unit]})
-                            </option>
-                          ))
-                        : state.trims.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name} ({PURCHASE_UNIT_LABELS[t.purchaseUnit]})
-                            </option>
-                          ))}
-                    </select>
-                  </div>
-
-                  {/* Quantity */}
-                  <div className="sm:col-span-3">
-                    <label className="block text-[11px] font-bold text-[#1A1A1E] mb-1">
-                      الكمية ({unitLabel})
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.5"
-                        value={line.quantity}
-                        onChange={(e) =>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                    {/* Item Selector */}
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-bold text-[#4B4A46] mb-1">
+                        {line.itemType === 'fabric' ? 'الصنف (قماش)' : 'الصنف (كلفة / عبوة)'}
+                      </label>
+                      <select
+                        value={line.refId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          const price =
+                            line.itemType === 'fabric'
+                              ? state.fabrics.find((f) => f.id === id)?.pricePerUnit || 0
+                              : state.trims.find((t) => t.id === id)?.packPrice || 0;
                           setLines((prev) =>
                             prev.map((l, i) =>
-                              i === idx ? { ...l, quantity: Number(e.target.value) } : l
+                              i === idx ? { ...l, refId: id, unitPrice: price } : l
                             )
-                          )
-                        }
-                        placeholder="أدخل الكمية"
-                        aria-label={`الكمية (${unitLabel})`}
-                        className="w-full rounded-lg border border-[#E5E3DD] bg-white pr-2.5 pl-12 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums focus:outline-none focus:border-[#1A1A1E]"
-                      />
-                      <span className="pointer-events-none absolute left-2 text-[10px] font-semibold text-[#6E6C66] bg-[#F3F2EE] px-1.5 py-0.5 rounded">
-                        {unitLabel}
-                      </span>
+                          );
+                        }}
+                        className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-medium text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
+                      >
+                        {line.itemType === 'fabric'
+                          ? state.fabrics.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.name} ({FABRIC_UNIT_LABELS[f.unit]})
+                              </option>
+                            ))
+                          : state.trims.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name} ({PURCHASE_UNIT_LABELS[t.purchaseUnit]})
+                              </option>
+                            ))}
+                      </select>
                     </div>
-                  </div>
 
-                  {/* Unit Price */}
-                  <div className="sm:col-span-3">
-                    <label className="block text-[11px] font-bold text-[#8E6742] mb-1">
-                      سعر الوحدة ({currencySymbol})
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={line.unitPrice}
-                        onChange={(e) =>
-                          setLines((prev) =>
-                            prev.map((l, i) =>
-                              i === idx ? { ...l, unitPrice: Number(e.target.value) } : l
+                    {/* Quantity */}
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-bold text-[#1A1A1E] mb-1">
+                        الكمية ({unitLabel})
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.5"
+                          value={line.quantity}
+                          onChange={(e) =>
+                            setLines((prev) =>
+                              prev.map((l, i) =>
+                                i === idx ? { ...l, quantity: Number(e.target.value) } : l
+                              )
                             )
-                          )
-                        }
-                        placeholder="أدخل سعر الوحدة"
-                        aria-label={`سعر الوحدة (${currencySymbol})`}
-                        className="w-full rounded-lg border border-[#E6D5C3] bg-white pr-2.5 pl-11 py-2 text-xs font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"
-                      />
-                      <span className="pointer-events-none absolute left-2 text-[10px] font-bold text-[#8E6742] bg-[#F6EFE7] px-1.5 py-0.5 rounded">
-                        {currencySymbol}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Line Total + Delete */}
-                  <div className="sm:col-span-2 flex items-center justify-between sm:justify-end gap-2 pb-1">
-                    <div className="text-right sm:text-left">
-                      <div className="text-[10px] text-[#6E6C66]">إجمالي البند</div>
-                      <div className="text-xs font-extrabold text-[#1A1A1E] tabular-nums">
-                        {formatMoney(lineTotal, state.currency)}
+                          }
+                          placeholder="أدخل الكمية"
+                          aria-label={`الكمية (${unitLabel})`}
+                          className="w-full rounded-lg border border-[#E5E3DD] bg-white pr-2.5 pl-12 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums focus:outline-none focus:border-[#1A1A1E]"
+                        />
+                        <span className="pointer-events-none absolute left-2 text-[10px] font-semibold text-[#6E6C66] bg-[#F3F2EE] px-1.5 py-0.5 rounded">
+                          {unitLabel}
+                        </span>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setLines((prev) => prev.filter((_, i) => i !== idx))}
-                      title="حذف البند"
-                      aria-label="حذف البند"
-                      className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer shrink-0"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    {/* Unit Price */}
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-bold text-[#8E6742] mb-1">
+                        سعر الوحدة ({currencySymbol})
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={line.unitPrice}
+                          onChange={(e) =>
+                            setLines((prev) =>
+                              prev.map((l, i) =>
+                                i === idx ? { ...l, unitPrice: Number(e.target.value) } : l
+                              )
+                            )
+                          }
+                          placeholder="أدخل سعر الوحدة"
+                          aria-label={`سعر الوحدة (${currencySymbol})`}
+                          className="w-full rounded-lg border border-[#E6D5C3] bg-white pr-2.5 pl-11 py-2 text-xs font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"
+                        />
+                        <span className="pointer-events-none absolute left-2 text-[10px] font-bold text-[#8E6742] bg-[#F6EFE7] px-1.5 py-0.5 rounded">
+                          {currencySymbol}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Line Total + Delete */}
+                    <div className="sm:col-span-2 flex items-center justify-between sm:justify-end gap-2 pb-1">
+                      <div className="text-right sm:text-left">
+                        <div className="text-[10px] text-[#6E6C66]">
+                          {alloc.shippingAllocated > 0 ? 'إجمالي البند بالشحن' : 'إجمالي البند'}
+                        </div>
+                        <div className="text-xs font-extrabold text-[#1A1A1E] tabular-nums">
+                          {formatMoney(alloc.landedLineTotal, state.currency)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setLines((prev) => prev.filter((_, i) => i !== idx))}
+                        title="حذف البند"
+                        aria-label="حذف البند"
+                        className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Per-line Pro-Rata Shipping Allocation Breakdown */}
+                  {alloc.shippingAllocated > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-dashed border-[#E6D5C3] text-[11px] tabular-nums">
+                      <span className="text-[#7B5836]">
+                        + شحن محمّل للـ{unitLabel}:{' '}
+                        <strong className="text-[#8E6742]">
+                          {formatMoney(alloc.shippingPerUnit, state.currency)}
+                        </strong>
+                        <span className="text-[#6E6C66] mr-1.5">
+                          (نصيب البند: {formatMoney(alloc.shippingAllocated, state.currency)})
+                        </span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-[#F2F7F4] border border-[#D4E6DC] px-2 py-0.5 font-bold text-[#2D5546]">
+                        التكلفة الفعلية للـ{unitLabel}:{' '}
+                        {formatMoney(alloc.landedUnitPrice, state.currency)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               );
             })}
+          </div>
+
+          {/* Shipping Cost & Pro-Rata Allocation Box */}
+          <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 space-y-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div className="sm:col-span-5">
+                <label
+                  htmlFor="po-shipping-cost"
+                  className="flex items-center gap-1.5 text-xs font-bold text-[#7B5836] mb-1"
+                >
+                  <Truck className="w-3.5 h-3.5 text-[#A67C52]" />
+                  <span>مصاريف الشحن والتوصيل</span>
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    id="po-shipping-cost"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={shippingCost || ''}
+                    onChange={(e) =>
+                      setShippingCost(Math.max(0, Number(e.target.value) || 0))
+                    }
+                    placeholder="0.00"
+                    className="w-full rounded-lg border border-[#E6D5C3] bg-white pr-3 pl-12 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums focus:outline-none focus:border-[#A67C52]"
+                  />
+                  <span className="pointer-events-none absolute left-2 text-[10px] font-bold text-[#8E6742] bg-[#F6EFE7] px-1.5 py-0.5 rounded">
+                    {CURRENCIES[state.currency]?.symbol || 'ج.م'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="sm:col-span-7 space-y-1.5">
+                {poCalc.hasFabrics && poCalc.hasTrims && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-[#6E6C66]">
+                      طريقة التحميل (Pro-Rata):
+                    </span>
+                    <div className="inline-flex rounded-lg bg-[#EFEAE2] p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setShippingAllocationMode('fabric_qty')}
+                        className={`px-2 py-1 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
+                          shippingAllocationMode === 'fabric_qty'
+                            ? 'bg-[#1A1A1E] text-white'
+                            : 'text-[#6E6C66]'
+                        }`}
+                      >
+                        على الأقمشة (لكل متر)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShippingAllocationMode('all_value')}
+                        className={`px-2 py-1 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
+                          shippingAllocationMode === 'all_value'
+                            ? 'bg-[#1A1A1E] text-white'
+                            : 'text-[#6E6C66]'
+                        }`}
+                      >
+                        على كل الأصناف (بالقيمة)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {poCalc.safeShipping > 0 ? (
+                  <div className="text-[11px] text-[#7B5836] bg-white/80 rounded-lg border border-[#E6D5C3]/80 px-2.5 py-1.5 tabular-nums">
+                    {poCalc.effectiveMode === 'fabric_qty' ? (
+                      <>
+                        نصيب كل متر/كجم من الشحن:{' '}
+                        <strong className="text-[#8E6742]">
+                          +{formatMoney(poCalc.shippingPerMeter, state.currency)}
+                        </strong>{' '}
+                        <span className="text-[#6E6C66]">
+                          (إجمالي الأقمشة: {formatNumber(poCalc.totalFabricQty, 1)} متر/كجم — يُضاف
+                          تلقائياً لتكلفة المتر بالمخزن)
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        يتم توزيع{' '}
+                        <strong className="text-[#8E6742]">
+                          {formatMoney(poCalc.safeShipping, state.currency)}
+                        </strong>{' '}
+                        بالتناسب حسب قيمة كل صنف وإضافتها لمتوسط التكلفة بالمخزن.
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-[#6E6C66]">
+                    أدخل مصاريف الشحن ليتم تحميلها بالتناسب (Pro-Rata) على كل متر وإضافتها للإجمالي
+                    ومؤشر متوسط التكلفة.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <label className="flex items-center gap-2 text-xs font-semibold text-[#1A1A1E] cursor-pointer">
@@ -617,20 +856,27 @@ export const PurchasesView: React.FC = () => {
             <span>استلام البضاعة بالمخزن فوراً وتحديث متوسط التكلفة</span>
           </label>
 
-          <div className="flex items-center justify-between pt-3 border-t border-[#E5E3DD]">
-            <div className="text-xs font-bold">
-              الإجمالي:{' '}
-              <span className="text-[#8E6742] tabular-nums">
-                {formatMoney(
-                  lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0),
-                  state.currency
-                )}
-              </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#E5E3DD]">
+            <div className="space-y-0.5">
+              {poCalc.safeShipping > 0 && (
+                <div className="text-[11px] text-[#6E6C66] tabular-nums">
+                  الأصناف: {formatMoney(poCalc.itemsSubtotal, state.currency)} + الشحن:{' '}
+                  <span className="font-bold text-[#8E6742]">
+                    {formatMoney(poCalc.safeShipping, state.currency)}
+                  </span>
+                </div>
+              )}
+              <div className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
+                {poCalc.safeShipping > 0 ? 'الإجمالي النهائي (شامل الشحن): ' : 'الإجمالي: '}
+                <span className="text-[#8E6742] font-extrabold tabular-nums">
+                  {formatMoney(poCalc.grandTotal, state.currency)}
+                </span>
+              </div>
             </div>
             <button
               type="submit"
               disabled={submitting || lines.length === 0}
-              className="px-5 py-2 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
             >
               {submitting ? 'جاري الحفظ...' : 'حفظ أمر الشراء'}
             </button>

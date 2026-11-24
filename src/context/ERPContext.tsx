@@ -115,6 +115,7 @@ interface ERPContextValue {
     supplierId?: string | null;
     supplierName: string;
     receiveImmediately: boolean;
+    shippingCost?: number;
     notes?: string;
     items: {
       itemType: 'fabric' | 'trim';
@@ -124,6 +125,7 @@ interface ERPContextValue {
       quantity: number;
       unitsPerPack: number;
       unitPrice: number;
+      shippingAllocated?: number;
     }[];
   }) => Promise<void>;
   receivePO: (poId: string) => Promise<void>;
@@ -994,26 +996,43 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const poId = newUuid();
-    const total = payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const shippingCost = Math.max(0, Math.round((Number(payload.shippingCost) || 0) * 100) / 100);
+    const itemsSubtotal = payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+    const total = Math.round((itemsSubtotal + shippingCost) * 100) / 100;
     setState((prev) => {
       let nextFabrics = prev.fabrics;
       let nextTrims = prev.trims;
       if (payload.receiveImmediately) {
         for (const item of payload.items) {
+          const alloc = Math.max(0, Number(item.shippingAllocated) || 0);
+          const landedUnit = item.quantity > 0 ? item.unitPrice + alloc / item.quantity : item.unitPrice;
           if (item.itemType === 'fabric' && item.fabricId) {
             nextFabrics = nextFabrics.map((f) => {
               if (f.id !== item.fabricId) return f;
               const newQty = f.stockQty + item.quantity;
               const newWac =
                 newQty > 0
-                  ? (f.stockQty * f.pricePerUnit + item.quantity * item.unitPrice) / newQty
-                  : item.unitPrice;
+                  ? (f.stockQty * f.pricePerUnit + item.quantity * landedUnit) / newQty
+                  : landedUnit;
               return { ...f, stockQty: newQty, pricePerUnit: Number(newWac.toFixed(2)) };
             });
           } else if (item.itemType === 'trim' && item.trimId) {
             nextTrims = nextTrims.map((t) => {
               if (t.id !== item.trimId) return t;
-              return { ...t, stockQty: t.stockQty + item.quantity * item.unitsPerPack };
+              const addedUnits = item.quantity * item.unitsPerPack;
+              const oldUnitCost = t.unitsPerPack > 0 ? t.packPrice / t.unitsPerPack : t.packPrice;
+              const newUnitCost = item.unitsPerPack > 0 ? landedUnit / item.unitsPerPack : landedUnit;
+              const newQty = t.stockQty + addedUnits;
+              const newPackPrice =
+                newQty > 0
+                  ? ((Math.max(t.stockQty, 0) * oldUnitCost + addedUnits * newUnitCost) / newQty) *
+                    t.unitsPerPack
+                  : landedUnit;
+              return {
+                ...t,
+                stockQty: newQty,
+                packPrice: Number(newPackPrice.toFixed(2)),
+              };
             });
           }
         }
@@ -1031,12 +1050,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             orderDate: new Date().toISOString().slice(0, 10),
             receivedAt: payload.receiveImmediately ? new Date().toISOString() : null,
             status: payload.receiveImmediately ? 'received' : 'ordered',
+            shippingCost,
             totalAmount: total,
             paidAmount: 0,
             notes: payload.notes,
             items: payload.items.map((it) => ({
               ...it,
               id: newUuid(),
+              shippingAllocated: Math.max(0, Number(it.shippingAllocated) || 0),
               lineTotal: it.quantity * it.unitPrice,
             })),
           },
@@ -1057,16 +1078,32 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let nextFabrics = prev.fabrics;
       let nextTrims = prev.trims;
       for (const item of po.items) {
+        const alloc = Math.max(0, Number(item.shippingAllocated) || 0);
+        const landedUnit = item.quantity > 0 ? item.unitPrice + alloc / item.quantity : item.unitPrice;
         if (item.itemType === 'fabric' && item.fabricId) {
-          nextFabrics = nextFabrics.map((f) =>
-            f.id === item.fabricId ? { ...f, stockQty: f.stockQty + item.quantity } : f
-          );
+          nextFabrics = nextFabrics.map((f) => {
+            if (f.id !== item.fabricId) return f;
+            const newQty = f.stockQty + item.quantity;
+            const newWac =
+              newQty > 0
+                ? (f.stockQty * f.pricePerUnit + item.quantity * landedUnit) / newQty
+                : landedUnit;
+            return { ...f, stockQty: newQty, pricePerUnit: Number(newWac.toFixed(2)) };
+          });
         } else if (item.itemType === 'trim' && item.trimId) {
-          nextTrims = nextTrims.map((t) =>
-            t.id === item.trimId
-              ? { ...t, stockQty: t.stockQty + item.quantity * item.unitsPerPack }
-              : t
-          );
+          nextTrims = nextTrims.map((t) => {
+            if (t.id !== item.trimId) return t;
+            const addedUnits = item.quantity * item.unitsPerPack;
+            const oldUnitCost = t.unitsPerPack > 0 ? t.packPrice / t.unitsPerPack : t.packPrice;
+            const newUnitCost = item.unitsPerPack > 0 ? landedUnit / item.unitsPerPack : landedUnit;
+            const newQty = t.stockQty + addedUnits;
+            const newPackPrice =
+              newQty > 0
+                ? ((Math.max(t.stockQty, 0) * oldUnitCost + addedUnits * newUnitCost) / newQty) *
+                  t.unitsPerPack
+                : landedUnit;
+            return { ...t, stockQty: newQty, packPrice: Number(newPackPrice.toFixed(2)) };
+          });
         }
       }
       return {

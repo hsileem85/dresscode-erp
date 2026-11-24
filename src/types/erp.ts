@@ -260,6 +260,7 @@ export interface PurchaseOrderItem {
   quantity: number;
   unitsPerPack: number;
   unitPrice: number;
+  shippingAllocated?: number;
   lineTotal: number;
 }
 
@@ -271,6 +272,7 @@ export interface PurchaseOrder {
   orderDate: string;
   receivedAt?: string | null;
   status: PurchaseOrderStatus;
+  shippingCost?: number;
   totalAmount: number;
   paidAmount: number;
   notes?: string;
