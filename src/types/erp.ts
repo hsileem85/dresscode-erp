@@ -121,6 +121,21 @@ export interface TrimAccessory {
 
 export type LaborBillingType = 'per_piece' | 'per_batch';
 
+export interface OperationServiceItem {
+  id: string;
+  name: string;
+  cost: number;
+}
+
+export interface OperationMaterialItem {
+  id: string;
+  name: string;
+  trimId?: string | null;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+}
+
 export interface OutsourcedOperation {
   id: string;
   name: string;
@@ -130,6 +145,8 @@ export interface OutsourcedOperation {
   cost: number;
   batchSize: number;
   leadTimeDays?: number;
+  services?: OperationServiceItem[];
+  suppliedMaterials?: OperationMaterialItem[];
   notes?: string;
 }
 

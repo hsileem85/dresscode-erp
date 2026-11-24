@@ -456,6 +456,10 @@ export function exportFullERPToExcel(state: ERPState): void {
   const laborData = state.operations.map((o) => ({
     'المرحلة': o.name,
     'اسم الورشة': o.workshopName,
+    'الخدمات المشمولة': (o.services || []).map((s) => s.name).join(' + '),
+    'خامات مشتراة من الورشة': (o.suppliedMaterials || [])
+      .map((m) => `${m.name} (${m.quantity} ${m.unit} × ${m.unitPrice})`)
+      .join('، '),
     'نظام المحاسبة': o.billingType === 'per_batch' ? 'بالباتش' : 'بالقطعة',
     'التكلفة المسجلة': o.cost,
     'حجم الباتش': o.batchSize,

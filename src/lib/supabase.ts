@@ -235,6 +235,23 @@ export async function fetchFullERPState(): Promise<{
     cost: Number(r.cost) || 0,
     batchSize: Number(r.batch_size) || 1,
     leadTimeDays: Number(r.lead_time_days) || 1,
+    services: Array.isArray(r.services)
+      ? r.services.map((s: Record<string, unknown>) => ({
+          id: String(s.id || newUuid()),
+          name: String(s.name || ''),
+          cost: Number(s.cost) || 0,
+        }))
+      : [],
+    suppliedMaterials: Array.isArray(r.supplied_materials)
+      ? r.supplied_materials.map((m: Record<string, unknown>) => ({
+          id: String(m.id || newUuid()),
+          name: String(m.name || ''),
+          trimId: (m.trimId as string | null | undefined) ?? (m.trim_id as string | null | undefined) ?? null,
+          quantity: Number(m.quantity) || 0,
+          unit: String(m.unit || 'قطعة'),
+          unitPrice: Number(m.unitPrice ?? m.unit_price) || 0,
+        }))
+      : [],
     notes: r.notes || '',
   }));
 
@@ -629,7 +646,7 @@ export const erpDb = {
   },
 
   async upsertOperation(op: OutsourcedOperation) {
-    const { error } = await db().from('outsourced_operations').upsert({
+    const baseRow = {
       id: op.id,
       name: op.name,
       workshop_id: op.workshopId || null,
@@ -639,8 +656,36 @@ export const erpDb = {
       batch_size: op.batchSize,
       lead_time_days: op.leadTimeDays ?? 1,
       notes: op.notes || null,
+    };
+
+    const { error } = await db().from('outsourced_operations').upsert({
+      ...baseRow,
+      services: op.services || [],
+      supplied_materials: op.suppliedMaterials || [],
     });
-    if (error) throw error;
+
+    if (!error) return;
+
+    // Graceful fallback if Migration 011 hasn't been executed yet in Supabase
+    const missingCols =
+      error.code === 'PGRST204' ||
+      error.code === '42703' ||
+      error.message?.includes('services') ||
+      error.message?.includes('supplied_materials') ||
+      error.message?.includes('column');
+
+    if (missingCols) {
+      const retry = await db().from('outsourced_operations').upsert(baseRow);
+      if (retry.error) throw retry.error;
+      if ((op.services?.length || 0) > 0 || (op.suppliedMaterials?.length || 0) > 0) {
+        throw new Error(
+          'تم حفظ المرحلة الأساسية، ولكن لحفظ تفاصيل الخدمات المتعددة والخامات المشتراة من الورشة سحابياً يرجى تشغيل ملف التحديث 011_operation_services_and_materials.sql في Supabase SQL Editor.'
+        );
+      }
+      return;
+    }
+
+    throw error;
   },
 
   async deleteOperation(id: string) {

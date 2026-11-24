@@ -920,7 +920,11 @@ export const ModelsBOMView: React.FC = () => {
                     <option value="">+ إضافة من دليل الورش...</option>
                     {state.operations.map((op) => (
                       <option key={op.id} value={op.id}>
-                        {op.name} — {op.workshopName} (
+                        {op.name}
+                        {op.suppliedMaterials && op.suppliedMaterials.length > 0
+                          ? ` [+ ${op.suppliedMaterials.length} خامات من الورشة]`
+                          : ''}{' '}
+                        — {op.workshopName} (
                         {formatMoney(getLaborStepUnitCost(op), state.currency)})
                       </option>
                     ))}
