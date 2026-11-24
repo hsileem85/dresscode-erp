@@ -35,10 +35,12 @@ export const ProductionView: React.FC = () => {
     issueProductionBatch,
     completeProductionBatch,
     recordWorkshopPayment,
+    updateProductionBatch,
     deleteProductionBatch,
   } = useERP();
 
   const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [editingBatch, setEditingBatch] = useState<ProductionOrder | null>(null);
   const [variantModalOpen, setVariantModalOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string>(state.models[0]?.id || '');
   const [variantQtyMap, setVariantQtyMap] = useState<Record<string, number>>({});
@@ -145,6 +147,7 @@ export const ProductionView: React.FC = () => {
   );
 
   const openNewBatchModal = () => {
+    setEditingBatch(null);
     const firstModel = state.models[0];
     const defaultModelId = firstModel?.id || '';
     setSelectedModelId(defaultModelId);
@@ -159,6 +162,27 @@ export const ProductionView: React.FC = () => {
     setBatchAdvance(0);
     setBatchPayMethod('كاش');
     setBatchNotes('');
+    setBatchModalOpen(true);
+  };
+
+  const openEditBatchModal = (po: ProductionOrder) => {
+    setEditingBatch(po);
+    setSelectedModelId(po.modelId);
+    const qtyMap: Record<string, number> = {};
+    for (const pv of po.variants) {
+      qtyMap[pv.variantId] = pv.plannedQty;
+    }
+    setVariantQtyMap(qtyMap);
+    const matchedWs =
+      po.workshopId ||
+      state.workshops.find((w) => po.workshopName && w.name === po.workshopName)?.id ||
+      '';
+    setBatchWorkshopId(matchedWs);
+    setBatchAgreedLabor(getOrderTotalLabor(po));
+    setLaborManuallyEdited(true);
+    setBatchAdvance(0);
+    setBatchPayMethod('كاش');
+    setBatchNotes(po.notes || '');
     setBatchModalOpen(true);
   };
 
@@ -254,8 +278,49 @@ export const ProductionView: React.FC = () => {
     setVariantModalOpen(false);
   };
 
-  const handleCreateBatch = async (e: React.FormEvent) => {
+  const handleSaveBatch = async (e: React.FormEvent) => {
     e.preventDefault();
+    const ws = state.workshops.find((w) => w.id === batchWorkshopId);
+
+    if (editingBatch) {
+      const targetModel =
+        state.models.find((m) => m.id === selectedModelId) ||
+        state.models.find((m) => m.id === editingBatch.modelId);
+      const isCompleted = editingBatch.status === 'completed';
+
+      let variants: { variantId: string; plannedQty: number }[] | undefined;
+      if (!isCompleted && targetModel) {
+        variants = targetModel.variants
+          .map((v) => ({ variantId: v.id, plannedQty: Number(variantQtyMap[v.id]) || 0 }))
+          .filter((v) => v.plannedQty > 0);
+        if (variants.length === 0) return;
+      }
+
+      const resolvedWorkshopName =
+        ws?.name ||
+        (!batchWorkshopId ? editingBatch.workshopName : '') ||
+        targetModel?.laborSteps[0]?.workshopName ||
+        'ورشة خارجية';
+
+      await runAction(editingBatch.id, async () => {
+        await updateProductionBatch({
+          id: editingBatch.id,
+          modelId:
+            editingBatch.status === 'planned' && targetModel
+              ? targetModel.id
+              : editingBatch.modelId,
+          workshopId: ws?.id || null,
+          workshopName: resolvedWorkshopName,
+          agreedLaborTotal: Math.max(0, Number(batchAgreedLabor) || 0),
+          notes: batchNotes,
+          variants,
+        });
+        setBatchModalOpen(false);
+        setEditingBatch(null);
+      });
+      return;
+    }
+
     if (!selectedModel) return;
     const variants = selectedModel.variants
       .map((v) => ({ variantId: v.id, plannedQty: Number(variantQtyMap[v.id]) || 0 }))
@@ -265,7 +330,6 @@ export const ProductionView: React.FC = () => {
     const batchNumber = `PRD-${new Date().getFullYear()}-${String(
       state.productionOrders.length + 1
     ).padStart(3, '0')}`;
-    const ws = state.workshops.find((w) => w.id === batchWorkshopId);
 
     await createProductionBatch({
       batchNumber,
@@ -622,8 +686,20 @@ export const ProductionView: React.FC = () => {
                       className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-[#E5E3DD] bg-white hover:bg-[#FAF9F7] text-[#1A1A1E] px-3 py-2 rounded-xl cursor-pointer"
                     >
                       <Printer className="w-3.5 h-3.5 text-[#A67C52]" />
-                      طباعة إذن تسليم
+                      إذن تسليم
                     </button>
+                    {po.status !== 'cancelled' && (
+                      <button
+                        type="button"
+                        disabled={busyId === po.id}
+                        onClick={() => openEditBatchModal(po)}
+                        aria-label="تعديل أمر التصنيع"
+                        className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-[#E5E3DD] bg-white hover:bg-[#F6EFE7] hover:text-[#8E6742] text-[#4B4A46] px-3 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        تعديل
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={busyId === po.id}
@@ -774,6 +850,18 @@ export const ProductionView: React.FC = () => {
                           <Printer className="w-3.5 h-3.5 text-[#A67C52]" />
                           إذن تسليم
                         </button>
+                        {po.status !== 'cancelled' && (
+                          <button
+                            type="button"
+                            disabled={busyId === po.id}
+                            onClick={() => openEditBatchModal(po)}
+                            title="تعديل بيانات أمر التصنيع"
+                            className="inline-flex items-center gap-1 text-xs font-semibold border border-[#E5E3DD] bg-white hover:bg-[#F6EFE7] hover:text-[#8E6742] text-[#4B4A46] px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            تعديل
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={busyId === po.id}
@@ -977,21 +1065,44 @@ export const ProductionView: React.FC = () => {
         </div>
       </div>
 
-      {/* Create Batch Modal (with Workshop Selection + Optional Advance Payment) */}
+      {/* Create / Edit Batch Modal (with Workshop Selection + Optional Advance Payment) */}
       <Modal
         open={batchModalOpen}
-        onClose={() => setBatchModalOpen(false)}
-        title="فتح أمر تصنيع وتقفيل بورشة خارجية"
-        subtitle="اختر الموديل والكميات المقصوصة، وحدد الورشة والدفعة تحت الحساب (اختياري — الباقي يُسدد مع الاستلام)"
+        onClose={() => {
+          setBatchModalOpen(false);
+          setEditingBatch(null);
+        }}
+        title={
+          editingBatch
+            ? `تعديل أمر التصنيع (${editingBatch.batchNumber})`
+            : 'فتح أمر تصنيع وتقفيل بورشة خارجية'
+        }
+        subtitle={
+          editingBatch
+            ? editingBatch.status === 'completed'
+              ? 'التشغيلة مكتملة — يمكنك تعديل الورشة أو إجمالي أجر الورشة (مع تسوية رصيد الورشة تلقائياً) والملاحظات'
+              : editingBatch.status === 'in_progress'
+              ? 'التشغيلة قيد التقفيل — يمكنك تعديل الورشة وأجر الورشة والملاحظات وتوزيع المقاسات (بدون إعادة صرف خامات)'
+              : 'يمكنك تعديل الموديل والورشة والكميات وأجر الورشة والملاحظات قبل صرف الخامات'
+            : 'اختر الموديل والكميات المقصوصة، وحدد الورشة والدفعة تحت الحساب (اختياري — الباقي يُسدد مع الاستلام)'
+        }
       >
-        <form onSubmit={handleCreateBatch} className="space-y-4">
+        <form onSubmit={handleSaveBatch} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold mb-1">الموديل</label>
+              <label className="block text-xs font-semibold mb-1">
+                الموديل
+                {editingBatch && editingBatch.status !== 'planned' && (
+                  <span className="text-[10px] font-normal text-[#9C9990] mr-1">
+                    (ثابت بعد صرف الخامات)
+                  </span>
+                )}
+              </label>
               <select
                 value={selectedModelId}
+                disabled={Boolean(editingBatch && editingBatch.status !== 'planned')}
                 onChange={(e) => handleBatchModelChange(e.target.value)}
-                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs"
+                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs disabled:bg-[#F3F2EE] disabled:text-[#6E6C66]"
               >
                 {state.models.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -1020,28 +1131,70 @@ export const ProductionView: React.FC = () => {
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold">
               <span>توزيع القطع المقصوصة على الألوان والمقاسات:</span>
-              <span className="text-[#8E6742] tabular-nums">الإجمالي: {totalDraftBatchQty} قطعة</span>
+              <span className="text-[#8E6742] tabular-nums">
+                الإجمالي:{' '}
+                {editingBatch?.status === 'completed'
+                  ? editingBatch.completedQty || editingBatch.plannedQty
+                  : totalDraftBatchQty}{' '}
+                قطعة
+              </span>
             </div>
-            {selectedModel && selectedModel.variants.length > 0 ? (
-              selectedModel.variants.map((v) => (
-                <div
-                  key={v.id}
-                  className="flex items-center justify-between bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl px-3 py-2"
-                >
-                  <div className="text-xs">
-                    <span className="font-bold">{v.color}</span> — مقاس{' '}
-                    <span className="font-bold">{v.size}</span>{' '}
-                    <span className="text-[#6E6C66] font-mono">({v.variantSku})</span>
+
+            {editingBatch?.status === 'completed' ? (
+              <div className="space-y-1.5">
+                {editingBatch.variants.map((pv) => {
+                  const v = selectedModel?.variants.find((x) => x.id === pv.variantId);
+                  return (
+                    <div
+                      key={pv.id}
+                      className="flex items-center justify-between bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl px-3 py-2 text-xs"
+                    >
+                      <div>
+                        <span className="font-bold">{v?.color || '—'}</span> — مقاس{' '}
+                        <span className="font-bold">{v?.size || '—'}</span>{' '}
+                        {v?.variantSku && (
+                          <span className="text-[#6E6C66] font-mono">({v.variantSku})</span>
+                        )}
+                      </div>
+                      <span className="font-bold tabular-nums text-[#4B4A46]">
+                        {pv.completedQty || pv.plannedQty} قطعة
+                      </span>
+                    </div>
+                  );
+                })}
+                <p className="text-[11px] text-[#6E6C66] bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl px-3 py-2">
+                  الكميات المستلمة للمخزن التام غير قابلة للتعديل بعد الاكتمال. لتعديل الرصيد استخدم
+                  جدول «مخزون المنتج التام» أو احذف التشغيلة وأعد تسجيلها.
+                </p>
+              </div>
+            ) : selectedModel && selectedModel.variants.length > 0 ? (
+              <>
+                {editingBatch?.status === 'in_progress' && (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    تنبيه: تم صرف الخامات مسبقاً لهذه التشغيلة — تعديل الكميات هنا يُحدّث التوزيع
+                    المتوقع استلامه عند التقفيل بدون إعادة صرف خامات تلقائياً.
+                  </p>
+                )}
+                {selectedModel.variants.map((v) => (
+                  <div
+                    key={v.id}
+                    className="flex items-center justify-between bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl px-3 py-2"
+                  >
+                    <div className="text-xs">
+                      <span className="font-bold">{v.color}</span> — مقاس{' '}
+                      <span className="font-bold">{v.size}</span>{' '}
+                      <span className="text-[#6E6C66] font-mono">({v.variantSku})</span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={variantQtyMap[v.id] ?? 0}
+                      onChange={(e) => handleBatchQtyChange(v.id, Number(e.target.value))}
+                      className="w-20 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1 text-xs text-center tabular-nums"
+                    />
                   </div>
-                  <input
-                    type="number"
-                    min="0"
-                    value={variantQtyMap[v.id] ?? 0}
-                    onChange={(e) => handleBatchQtyChange(v.id, Number(e.target.value))}
-                    className="w-20 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1 text-xs text-center tabular-nums"
-                  />
-                </div>
-              ))
+                ))}
+              </>
             ) : (
               <p className="text-xs text-amber-700 bg-amber-50 p-3 rounded-xl">
                 لا توجد مقاسات/ألوان مسجلة لهذا الموديل بعد. أضف مقاساً أولاً من زر «إضافة مقاس /
@@ -1052,68 +1205,127 @@ export const ProductionView: React.FC = () => {
 
           {/* Workshop Fee & Optional Advance Payment */}
           <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 space-y-3">
-            <div className="text-xs font-bold text-[#7B5836]">
-              حساب الورشة (دفعة تحت الحساب اختيارية + الباقي مع الاستلام)
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <div>
-                <label className="block text-[11px] font-semibold mb-1">
-                  إجمالي أجر الورشة
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={batchAgreedLabor}
-                  onChange={(e) => {
-                    setLaborManuallyEdited(true);
-                    setBatchAgreedLabor(Number(e.target.value));
-                  }}
-                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold tabular-nums"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold mb-1">
-                  دفعة تحت الحساب الآن (اختياري)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={batchAdvance}
-                  onChange={(e) => setBatchAdvance(Number(e.target.value))}
-                  placeholder="0"
-                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold text-emerald-700 tabular-nums"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold mb-1">طريقة الدفع</label>
-                <select
-                  value={batchPayMethod}
-                  onChange={(e) => setBatchPayMethod(e.target.value)}
-                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs"
-                >
-                  {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-2 border-t border-[#E6D5C3]">
-              <span className="text-[#6E6C66]">
-                المتبقي للورشة عند الاستلام:{' '}
-                <strong className="text-[#1A1A1E] tabular-nums">
-                  {formatMoney(Math.max(0, batchAgreedLabor - batchAdvance), state.currency)}
-                </strong>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-[#7B5836]">
+                {editingBatch
+                  ? 'حساب الورشة (المدفوعات السابقة محفوظة ويمكنك تعديل إجمالي الأجر)'
+                  : 'حساب الورشة (دفعة تحت الحساب اختيارية + الباقي مع الاستلام)'}
               </span>
-              {batchAdvance > 0 && (
-                <span className="text-emerald-700 font-semibold">
-                  ✓ تُخصم الدفعة من الخزنة تلقائياً (لا تُكرر في P&amp;L)
-                </span>
+              {editingBatch && editingBatch.status !== 'completed' && totalDraftBatchQty > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const unitLabor = getModelLaborPerPiece(selectedModelId);
+                    setBatchAgreedLabor(Math.round(totalDraftBatchQty * unitLabor * 100) / 100);
+                  }}
+                  className="text-[11px] font-semibold text-[#8E6742] hover:underline cursor-pointer"
+                >
+                  حساب تلقائي من بطاقة الموديل
+                </button>
               )}
             </div>
+
+            {editingBatch ? (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-semibold mb-1">
+                    إجمالي أجر الورشة
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={batchAgreedLabor}
+                    onChange={(e) => {
+                      setLaborManuallyEdited(true);
+                      setBatchAgreedLabor(Number(e.target.value));
+                    }}
+                    className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold mb-1 text-[#6E6C66]">
+                    المدفوع للورشة حتى الآن
+                  </label>
+                  <div className="w-full rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] px-2.5 py-2 text-xs font-bold text-emerald-700 tabular-nums">
+                    {formatMoney(editingBatch.paidToWorkshop || 0, state.currency)}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold mb-1 text-[#6E6C66]">
+                    المتبقي بعد التعديل
+                  </label>
+                  <div className="w-full rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] px-2.5 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums">
+                    {formatMoney(
+                      Math.max(0, batchAgreedLabor - (editingBatch.paidToWorkshop || 0)),
+                      state.currency
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1">
+                      إجمالي أجر الورشة
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={batchAgreedLabor}
+                      onChange={(e) => {
+                        setLaborManuallyEdited(true);
+                        setBatchAgreedLabor(Number(e.target.value));
+                      }}
+                      className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1">
+                      دفعة تحت الحساب الآن (اختياري)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={batchAdvance}
+                      onChange={(e) => setBatchAdvance(Number(e.target.value))}
+                      placeholder="0"
+                      className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-bold text-emerald-700 tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1">طريقة الدفع</label>
+                    <select
+                      value={batchPayMethod}
+                      onChange={(e) => setBatchPayMethod(e.target.value)}
+                      className="w-full rounded-xl border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs"
+                    >
+                      {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-2 border-t border-[#E6D5C3]">
+                  <span className="text-[#6E6C66]">
+                    المتبقي للورشة عند الاستلام:{' '}
+                    <strong className="text-[#1A1A1E] tabular-nums">
+                      {formatMoney(Math.max(0, batchAgreedLabor - batchAdvance), state.currency)}
+                    </strong>
+                  </span>
+                  {batchAdvance > 0 && (
+                    <span className="text-emerald-700 font-semibold">
+                      ✓ تُخصم الدفعة من الخزنة تلقائياً (لا تُكرر في P&amp;L)
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           <div>
@@ -1130,16 +1342,20 @@ export const ProductionView: React.FC = () => {
           <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
             <button
               type="button"
-              onClick={() => setBatchModalOpen(false)}
+              onClick={() => {
+                setBatchModalOpen(false);
+                setEditingBatch(null);
+              }}
               className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
             >
               إلغاء
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl bg-[#1A1A1E] text-white text-xs font-bold cursor-pointer"
+              disabled={Boolean(editingBatch && busyId === editingBatch.id)}
+              className="px-5 py-2 rounded-xl bg-[#1A1A1E] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
             >
-              إنشاء أمر التصنيع
+              {editingBatch ? 'حفظ التعديلات' : 'إنشاء أمر التصنيع'}
             </button>
           </div>
         </form>

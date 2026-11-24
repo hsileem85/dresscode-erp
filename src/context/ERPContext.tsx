@@ -151,6 +151,15 @@ interface ERPContextValue {
     paymentMethod?: string,
     notes?: string
   ) => Promise<void>;
+  updateProductionBatch: (payload: {
+    id: string;
+    modelId: string;
+    workshopId?: string | null;
+    workshopName?: string;
+    agreedLaborTotal: number;
+    notes?: string;
+    variants?: { variantId: string; plannedQty: number }[];
+  }) => Promise<void>;
   deleteProductionBatch: (prodId: string) => Promise<void>;
 
   createSalesOrder: (payload: {
@@ -1301,6 +1310,105 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const updateProductionBatch: ERPContextValue['updateProductionBatch'] = async (payload) => {
+    const existing = state.productionOrders.find((p) => p.id === payload.id);
+    if (!existing) return;
+
+    if (cloudConnected) {
+      await runCloud(() =>
+        erpDb.updateProductionOrder(payload, {
+          status: existing.status,
+          workshopId: existing.workshopId,
+          agreedLaborTotal: existing.agreedLaborTotal,
+          actualLaborCost: existing.actualLaborCost,
+        })
+      );
+      return;
+    }
+
+    const newLabor = Math.max(0, Number(payload.agreedLaborTotal) || 0);
+    setState((prev) => {
+      const target = prev.productionOrders.find((p) => p.id === payload.id);
+      if (!target) return prev;
+
+      const cleanVariants =
+        payload.variants && target.status !== 'completed'
+          ? payload.variants.filter((v) => v.plannedQty > 0)
+          : null;
+      const newPlannedQty =
+        cleanVariants && cleanVariants.length > 0
+          ? cleanVariants.reduce((s, v) => s + v.plannedQty, 0)
+          : target.plannedQty;
+
+      let nextWorkshops = prev.workshops;
+      if (target.status === 'completed') {
+        const oldLabor = target.actualLaborCost || target.agreedLaborTotal || 0;
+        const paid = target.paidToWorkshop || 0;
+        const oldUnpaid = Math.max(0, oldLabor - paid);
+        const newUnpaid = Math.max(0, newLabor - paid);
+        const oldWsId = target.workshopId || null;
+        const newWsId = payload.workshopId || null;
+
+        if (oldWsId === newWsId) {
+          if (newWsId && newUnpaid !== oldUnpaid) {
+            nextWorkshops = nextWorkshops.map((w) =>
+              w.id === newWsId
+                ? { ...w, balancePayable: Math.max(0, w.balancePayable + (newUnpaid - oldUnpaid)) }
+                : w
+            );
+          }
+        } else {
+          nextWorkshops = nextWorkshops.map((w) => {
+            if (oldWsId && w.id === oldWsId && oldUnpaid > 0) {
+              return { ...w, balancePayable: Math.max(0, w.balancePayable - oldUnpaid) };
+            }
+            if (newWsId && w.id === newWsId && newUnpaid > 0) {
+              return { ...w, balancePayable: w.balancePayable + newUnpaid };
+            }
+            return w;
+          });
+        }
+      }
+
+      const nextActualCogs =
+        target.status === 'completed' && target.completedQty > 0
+          ? Math.round(
+              ((target.actualMaterialCost + newLabor + target.allocatedOverheadCost) /
+                target.completedQty) *
+                100
+            ) / 100
+          : target.actualUnitCogs;
+
+      return {
+        ...prev,
+        workshops: nextWorkshops,
+        productionOrders: prev.productionOrders.map((p) => {
+          if (p.id !== payload.id) return p;
+          return {
+            ...p,
+            modelId: p.status === 'planned' ? payload.modelId : p.modelId,
+            workshopId: payload.workshopId || null,
+            workshopName: payload.workshopName || '',
+            agreedLaborTotal: newLabor,
+            actualLaborCost: p.status === 'completed' ? newLabor : p.actualLaborCost,
+            actualUnitCogs: nextActualCogs,
+            plannedQty: p.status === 'completed' ? p.plannedQty : newPlannedQty,
+            notes: payload.notes || '',
+            variants:
+              p.status !== 'completed' && cleanVariants && cleanVariants.length > 0
+                ? cleanVariants.map((v) => ({
+                    id: newUuid(),
+                    variantId: v.variantId,
+                    plannedQty: v.plannedQty,
+                    completedQty: 0,
+                  }))
+                : p.variants,
+          };
+        }),
+      };
+    });
+  };
+
   const deleteProductionBatch = async (prodId: string) => {
     const po = state.productionOrders.find((p) => p.id === prodId);
     if (!po) return;
@@ -1600,6 +1708,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         issueProductionBatch,
         completeProductionBatch,
         recordWorkshopPayment,
+        updateProductionBatch,
         deleteProductionBatch,
         createSalesOrder,
         confirmSalesOrder,

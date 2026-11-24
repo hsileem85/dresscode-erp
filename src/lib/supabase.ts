@@ -1024,6 +1024,115 @@ export const erpDb = {
     throw error;
   },
 
+  async updateProductionOrder(
+    payload: {
+      id: string;
+      modelId: string;
+      workshopId?: string | null;
+      workshopName?: string;
+      agreedLaborTotal: number;
+      notes?: string;
+      variants?: { variantId: string; plannedQty: number }[];
+    },
+    currentOrder?: Pick<
+      ProductionOrder,
+      'status' | 'workshopId' | 'agreedLaborTotal' | 'actualLaborCost'
+    >
+  ) {
+    const client = db();
+    const variantsJson =
+      payload.variants && currentOrder?.status !== 'completed'
+        ? payload.variants
+            .filter((v) => v.plannedQty > 0)
+            .map((v) => ({ variant_id: v.variantId, planned_qty: v.plannedQty }))
+        : null;
+
+    const { error } = await client.rpc('update_production_order', {
+      p_prod_id: payload.id,
+      p_model_id: payload.modelId,
+      p_workshop_id: payload.workshopId || null,
+      p_workshop_name: payload.workshopName || '',
+      p_agreed_labor_total: Math.max(0, Number(payload.agreedLaborTotal) || 0),
+      p_notes: payload.notes || null,
+      p_variants: variantsJson,
+    });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('update_production_order');
+
+    if (missingFn) {
+      const status = currentOrder?.status;
+      if (status === 'completed') {
+        const prevLabor = currentOrder?.actualLaborCost || currentOrder?.agreedLaborTotal || 0;
+        const workshopChanged =
+          (currentOrder?.workshopId || null) !== (payload.workshopId || null);
+        const laborChanged =
+          Math.round(prevLabor * 100) !==
+          Math.round(Math.max(0, Number(payload.agreedLaborTotal) || 0) * 100);
+
+        if (workshopChanged || laborChanged) {
+          throw new Error(
+            'لتعديل الورشة أو أجر الورشة على أمر تصنيع مكتمل مع تسوية رصيد الورشة تلقائياً، يرجى تشغيل ملف التحديث 010_update_production_order.sql في Supabase SQL Editor أولاً.'
+          );
+        }
+
+        const { error: notesErr } = await client
+          .from('production_orders')
+          .update({ notes: payload.notes?.trim() || null })
+          .eq('id', payload.id);
+        if (notesErr) throw notesErr;
+        return;
+      }
+
+      // Direct fallback for planned / in_progress orders
+      const cleanVariants = (payload.variants || []).filter((v) => v.plannedQty > 0);
+      const plannedQty = cleanVariants.reduce((s, v) => s + v.plannedQty, 0);
+
+      const updatePatch: Record<string, unknown> = {
+        workshop_id: payload.workshopId || null,
+        workshop_name: payload.workshopName || '',
+        agreed_labor_total: Math.max(0, Number(payload.agreedLaborTotal) || 0),
+        notes: payload.notes?.trim() || null,
+      };
+      if (status === 'planned') {
+        updatePatch.model_id = payload.modelId;
+      }
+      if (cleanVariants.length > 0 && plannedQty > 0) {
+        updatePatch.planned_qty = plannedQty;
+      }
+
+      const { error: updErr } = await client
+        .from('production_orders')
+        .update(updatePatch)
+        .eq('id', payload.id);
+      if (updErr) throw updErr;
+
+      if (cleanVariants.length > 0) {
+        const { error: delVarErr } = await client
+          .from('production_order_variants')
+          .delete()
+          .eq('production_order_id', payload.id);
+        if (delVarErr) throw delVarErr;
+
+        const { error: insVarErr } = await client.from('production_order_variants').insert(
+          cleanVariants.map((v) => ({
+            id: newUuid(),
+            production_order_id: payload.id,
+            variant_id: v.variantId,
+            planned_qty: v.plannedQty,
+          }))
+        );
+        if (insVarErr) throw insVarErr;
+      }
+      return;
+    }
+
+    throw error;
+  },
+
   async createSalesOrder(payload: {
     orderNumber: string;
     customerId?: string | null;
