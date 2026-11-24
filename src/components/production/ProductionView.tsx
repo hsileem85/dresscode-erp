@@ -30,10 +30,12 @@ export const ProductionView: React.FC = () => {
     state,
     addModelVariant,
     updateModelVariant,
+    deleteModelVariant,
     createProductionBatch,
     issueProductionBatch,
     completeProductionBatch,
     recordWorkshopPayment,
+    deleteProductionBatch,
   } = useERP();
 
   const [batchModalOpen, setBatchModalOpen] = useState(false);
@@ -84,6 +86,31 @@ export const ProductionView: React.FC = () => {
       ),
     [state.models]
   );
+
+  const linkedVariantCounts = useMemo(() => {
+    const map = new Map<string, { salesCount: number; prodCount: number }>();
+    for (const s of state.salesOrders) {
+      const seen = new Set<string>();
+      for (const it of s.items) {
+        if (seen.has(it.variantId)) continue;
+        seen.add(it.variantId);
+        const cur = map.get(it.variantId) || { salesCount: 0, prodCount: 0 };
+        cur.salesCount += 1;
+        map.set(it.variantId, cur);
+      }
+    }
+    for (const p of state.productionOrders) {
+      const seen = new Set<string>();
+      for (const pv of p.variants) {
+        if (seen.has(pv.variantId)) continue;
+        seen.add(pv.variantId);
+        const cur = map.get(pv.variantId) || { salesCount: 0, prodCount: 0 };
+        cur.prodCount += 1;
+        map.set(pv.variantId, cur);
+      }
+    }
+    return map;
+  }, [state.salesOrders, state.productionOrders]);
 
   const selectedModel = state.models.find((m) => m.id === selectedModelId);
 
@@ -393,6 +420,10 @@ export const ProductionView: React.FC = () => {
     setBusyId(id);
     try {
       await fn();
+    } catch {
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     } finally {
       setBusyId(null);
     }
@@ -584,14 +615,26 @@ export const ProductionView: React.FC = () => {
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => openDispatchSlipModal(po)}
-                    className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-[#E5E3DD] bg-white hover:bg-[#FAF9F7] text-[#1A1A1E] px-3 py-2 rounded-xl cursor-pointer"
-                  >
-                    <Printer className="w-3.5 h-3.5 text-[#A67C52]" />
-                    طباعة إذن تسليم خامات للورشة
-                  </button>
+                  <div className="w-full flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openDispatchSlipModal(po)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-[#E5E3DD] bg-white hover:bg-[#FAF9F7] text-[#1A1A1E] px-3 py-2 rounded-xl cursor-pointer"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-[#A67C52]" />
+                      طباعة إذن تسليم
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === po.id}
+                      onClick={() => void runAction(po.id, () => deleteProductionBatch(po.id))}
+                      aria-label="حذف أمر التصنيع"
+                      className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      حذف
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -731,6 +774,16 @@ export const ProductionView: React.FC = () => {
                           <Printer className="w-3.5 h-3.5 text-[#A67C52]" />
                           إذن تسليم
                         </button>
+                        <button
+                          type="button"
+                          disabled={busyId === po.id}
+                          onClick={() => void runAction(po.id, () => deleteProductionBatch(po.id))}
+                          title="حذف أمر التصنيع وعكس الخامات المصروفة والمنتج التام ورصيد الورشة"
+                          className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          حذف
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -761,52 +814,74 @@ export const ProductionView: React.FC = () => {
 
         {/* Mobile Cards */}
         <div className="md:hidden divide-y divide-[#F0EFEA]">
-          {allVariants.map((v) => (
-            <div key={v.id} className="p-4 space-y-2.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="font-bold text-sm text-[#1A1A1E] truncate">{v.modelName}</div>
-                  <div className="text-[11px] text-[#6E6C66] mt-0.5">
-                    {v.color} — <span className="font-bold text-[#1A1A1E]">{v.size}</span>
-                    <span className="font-mono mr-1.5 text-[10px]">({v.variantSku})</span>
+          {allVariants.map((v) => {
+            const links = linkedVariantCounts.get(v.id);
+            const isLinked = Boolean(links && (links.salesCount > 0 || links.prodCount > 0));
+            return (
+              <div key={v.id} className="p-4 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm text-[#1A1A1E] truncate">{v.modelName}</div>
+                    <div className="text-[11px] text-[#6E6C66] mt-0.5">
+                      {v.color} — <span className="font-bold text-[#1A1A1E]">{v.size}</span>
+                      <span className="font-mono mr-1.5 text-[10px]">({v.variantSku})</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span
+                      className={`inline-flex px-2.5 py-0.5 rounded-lg text-xs font-extrabold tabular-nums ${
+                        v.finishedGoodsQty <= v.reorderLevel
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-[#F6EFE7] text-[#8E6742]'
+                      }`}
+                    >
+                      {v.finishedGoodsQty} قطعة
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => openEditVariantModal(v)}
+                      aria-label="تعديل الصنف والرصيد"
+                      className="p-1.5 rounded-lg text-[#4B4A46] hover:bg-[#F3F2EE] cursor-pointer"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === v.id}
+                      onClick={() => void runAction(v.id, () => deleteModelVariant(v.id))}
+                      aria-label="حذف الصنف"
+                      title={
+                        isLinked
+                          ? 'لا يمكن الحذف — الصنف مرتبط بمبيعات أو أوامر تصنيع'
+                          : 'حذف الصنف من مخزون المنتج التام'
+                      }
+                      className={`p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
+                        isLinked
+                          ? 'text-[#B8B4AA] hover:text-amber-700 hover:bg-amber-50'
+                          : 'text-[#6E6C66] hover:text-red-600 hover:bg-red-50'
+                      }`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span
-                    className={`inline-flex px-2.5 py-0.5 rounded-lg text-xs font-extrabold tabular-nums ${
-                      v.finishedGoodsQty <= v.reorderLevel
-                        ? 'bg-red-100 text-red-700'
-                        : 'bg-[#F6EFE7] text-[#8E6742]'
-                    }`}
-                  >
-                    {v.finishedGoodsQty} قطعة
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => openEditVariantModal(v)}
-                    aria-label="تعديل الصنف والرصيد"
-                    className="p-1.5 rounded-lg text-[#4B4A46] hover:bg-[#F3F2EE] cursor-pointer"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                  </button>
+                <div className="grid grid-cols-2 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">متوسط التكلفة (COGS)</div>
+                    <div className="font-semibold tabular-nums mt-0.5">
+                      {formatMoney(v.avgUnitCogs, state.currency)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-[#6E6C66]">سعر البيع</div>
+                    <div className="font-bold text-[#1A1A1E] tabular-nums mt-0.5">
+                      {formatMoney(v.retailPrice, state.currency)}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
-                <div>
-                  <div className="text-[10px] text-[#6E6C66]">متوسط التكلفة (COGS)</div>
-                  <div className="font-semibold tabular-nums mt-0.5">
-                    {formatMoney(v.avgUnitCogs, state.currency)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-[#6E6C66]">سعر البيع</div>
-                  <div className="font-bold text-[#1A1A1E] tabular-nums mt-0.5">
-                    {formatMoney(v.retailPrice, state.currency)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {allVariants.length === 0 && (
             <div className="py-8 text-center text-xs text-[#6E6C66]">
               لا توجد أصناف منتج تام بعد. اضغط «إضافة مقاس / لون أو رصيد افتتاحي» للبدء.
@@ -825,47 +900,71 @@ export const ProductionView: React.FC = () => {
                 <th className="py-3 px-4">الرصيد المتاح</th>
                 <th className="py-3 px-4">متوسط تكلفة القطعة</th>
                 <th className="py-3 px-4">سعر البيع</th>
-                <th className="py-3 px-4">تعديل</th>
+                <th className="py-3 px-4">إجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0EFEA]">
-              {allVariants.map((v) => (
-                <tr key={v.id} className="hover:bg-[#FAF9F7]">
-                  <td className="py-3 px-4 font-mono text-xs">{v.variantSku}</td>
-                  <td className="py-3 px-4 font-semibold">{v.modelName}</td>
-                  <td className="py-3 px-4 text-xs">
-                    {v.color} — <span className="font-bold">{v.size}</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`inline-flex px-2.5 py-0.5 rounded-lg text-xs font-extrabold tabular-nums ${
-                        v.finishedGoodsQty <= v.reorderLevel
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-[#F6EFE7] text-[#8E6742]'
-                      }`}
-                    >
-                      {v.finishedGoodsQty} قطعة
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 tabular-nums text-xs">
-                    {formatMoney(v.avgUnitCogs, state.currency)}
-                  </td>
-                  <td className="py-3 px-4 tabular-nums font-bold">
-                    {formatMoney(v.retailPrice, state.currency)}
-                  </td>
-                  <td className="py-3 px-4">
-                    <button
-                      type="button"
-                      onClick={() => openEditVariantModal(v)}
-                      title="تعديل الرصيد الافتتاحي أو التكلفة أو السعر"
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#4B4A46] hover:text-[#8E6742] hover:bg-[#F6EFE7] px-2.5 py-1 rounded-lg cursor-pointer"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>تعديل</span>
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {allVariants.map((v) => {
+                const links = linkedVariantCounts.get(v.id);
+                const isLinked = Boolean(links && (links.salesCount > 0 || links.prodCount > 0));
+                return (
+                  <tr key={v.id} className="hover:bg-[#FAF9F7]">
+                    <td className="py-3 px-4 font-mono text-xs">{v.variantSku}</td>
+                    <td className="py-3 px-4 font-semibold">{v.modelName}</td>
+                    <td className="py-3 px-4 text-xs">
+                      {v.color} — <span className="font-bold">{v.size}</span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`inline-flex px-2.5 py-0.5 rounded-lg text-xs font-extrabold tabular-nums ${
+                          v.finishedGoodsQty <= v.reorderLevel
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-[#F6EFE7] text-[#8E6742]'
+                        }`}
+                      >
+                        {v.finishedGoodsQty} قطعة
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 tabular-nums text-xs">
+                      {formatMoney(v.avgUnitCogs, state.currency)}
+                    </td>
+                    <td className="py-3 px-4 tabular-nums font-bold">
+                      {formatMoney(v.retailPrice, state.currency)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => openEditVariantModal(v)}
+                          title="تعديل الرصيد الافتتاحي أو التكلفة أو السعر"
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-[#4B4A46] hover:text-[#8E6742] hover:bg-[#F6EFE7] px-2.5 py-1 rounded-lg cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>تعديل</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyId === v.id}
+                          onClick={() => void runAction(v.id, () => deleteModelVariant(v.id))}
+                          title={
+                            isLinked
+                              ? 'لا يمكن الحذف — الصنف مرتبط بمبيعات أو أوامر تصنيع'
+                              : 'حذف الصنف من مخزون المنتج التام'
+                          }
+                          className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
+                            isLinked
+                              ? 'text-[#9C9990] hover:text-amber-700 hover:bg-amber-50'
+                              : 'text-red-700 hover:bg-red-50'
+                          }`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>حذف</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {allVariants.length === 0 && (
                 <tr>
                   <td colSpan={7} className="py-10 text-center text-xs text-[#6E6C66]">

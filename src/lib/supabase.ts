@@ -781,6 +781,29 @@ export const erpDb = {
     }
   },
 
+  async deleteVariant(variantId: string) {
+    const { error } = await db().rpc('delete_model_variant', { p_variant_id: variantId });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('delete_model_variant');
+
+    if (missingFn) {
+      const { error: delErr } = await db().from('model_variants').delete().eq('id', variantId);
+      if (!delErr) return;
+      if (delErr.code === '23503') {
+        throw new Error(
+          'لا يمكن حذف هذا الصنف لأنه مرتبط بمبيعات أو أوامر تصنيع مسجلة — احذف السجلات المرتبطة أولاً.'
+        );
+      }
+      throw delErr;
+    }
+
+    throw error;
+  },
+
   async upsertOverheadItem(item: OverheadItem) {
     const { error } = await db().from('overhead_items').upsert({
       id: item.id,
@@ -969,6 +992,36 @@ export const erpDb = {
       }
       throw error;
     }
+  },
+
+  async deleteProductionOrder(
+    prodId: string,
+    currentStatus?: ProductionOrder['status'],
+    paidToWorkshop = 0
+  ) {
+    const { error } = await db().rpc('delete_production_order', { p_prod_id: prodId });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('delete_production_order');
+
+    if (missingFn) {
+      if (
+        (currentStatus === 'planned' || currentStatus === 'cancelled') &&
+        paidToWorkshop <= 0
+      ) {
+        const { error: delErr } = await db().from('production_orders').delete().eq('id', prodId);
+        if (delErr) throw delErr;
+        return;
+      }
+      throw new Error(
+        'لحذف أمر تصنيع تم صرف خاماته أو استلامه أو تسجيل دفعات ورشة عليه مع عكس الأرصدة تلقائياً، يرجى تشغيل ملف التحديث 009_delete_production_and_variants.sql في Supabase SQL Editor أولاً.'
+      );
+    }
+
+    throw error;
   },
 
   async createSalesOrder(payload: {

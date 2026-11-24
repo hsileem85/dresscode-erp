@@ -101,6 +101,7 @@ interface ERPContextValue {
   importModels: (models: ProductModel[]) => void;
   addModelVariant: (variant: Omit<ModelVariant, 'id'>) => Promise<void>;
   updateModelVariant: (variant: ModelVariant) => Promise<void>;
+  deleteModelVariant: (variantId: string) => Promise<void>;
 
   // Overhead
   setMonthlyVolume: (volume: number) => void;
@@ -150,6 +151,7 @@ interface ERPContextValue {
     paymentMethod?: string,
     notes?: string
   ) => Promise<void>;
+  deleteProductionBatch: (prodId: string) => Promise<void>;
 
   createSalesOrder: (payload: {
     orderNumber: string;
@@ -818,6 +820,63 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  const deleteModelVariant = async (variantId: string) => {
+    const parentModel = state.models.find((m) => m.variants.some((v) => v.id === variantId));
+    const target = parentModel?.variants.find((v) => v.id === variantId);
+    if (!target) return;
+
+    const linkedSalesCount = state.salesOrders.filter((s) =>
+      s.items.some((it) => it.variantId === variantId)
+    ).length;
+    const linkedProdCount = state.productionOrders.filter((p) =>
+      p.variants.some((pv) => pv.variantId === variantId)
+    ).length;
+
+    if (linkedSalesCount > 0 || linkedProdCount > 0) {
+      const reasons: string[] = [];
+      if (linkedSalesCount > 0) reasons.push(`${linkedSalesCount} طلب مبيعات`);
+      if (linkedProdCount > 0) reasons.push(`${linkedProdCount} أمر تصنيع`);
+      setSyncError(
+        `لا يمكن حذف الصنف «${parentModel?.name || 'موديل'} — ${target.color} / ${
+          target.size
+        }» (${target.variantSku}) لأنه مرتبط بـ ${reasons.join(
+          ' و '
+        )}. احذف السجلات المرتبطة أولاً.`
+      );
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    const ok = await confirmAction({
+      title: 'تأكيد حذف صنف من مخزون المنتج التام',
+      message: `هل أنت متأكد من حذف الصنف «${parentModel?.name || 'موديل'} — ${target.color} / ${
+        target.size
+      }» (${target.variantSku})؟`,
+      detail:
+        target.finishedGoodsQty > 0
+          ? `تنبيه: يوجد رصيد متاح حالياً (${target.finishedGoodsQty} قطعة) على هذا الصنف. عند التأكيد سيُحذف الصنف ورصيده نهائياً من مخزون المنتج التام.`
+          : 'سيتم حذف الصنف نهائياً من قائمة المقاسات والألوان ولا يمكن التراجع عن هذا الإجراء.',
+      confirmLabel: 'نعم، احذف الصنف',
+    });
+    if (!ok) return;
+
+    if (cloudConnected) {
+      await runCloud(() => erpDb.deleteVariant(variantId));
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      models: prev.models.map((m) =>
+        m.id === target.modelId
+          ? { ...m, variants: m.variants.filter((v) => v.id !== variantId) }
+          : m
+      ),
+    }));
+  };
+
   // Overhead
   const setMonthlyVolume = (volume: number) => {
     const safe = Math.max(1, volume);
@@ -1242,6 +1301,126 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const deleteProductionBatch = async (prodId: string) => {
+    const po = state.productionOrders.find((p) => p.id === prodId);
+    if (!po) return;
+    const model = state.models.find((m) => m.id === po.modelId);
+    const paid = po.paidToWorkshop || 0;
+    const totalLabor = po.actualLaborCost || po.agreedLaborTotal || 0;
+    const unpaidLabor = po.status === 'completed' ? Math.max(0, totalLabor - paid) : 0;
+
+    const detailParts: string[] = [];
+    if (po.status === 'planned') {
+      detailParts.push('لم يتم صرف خامات لهذه التشغيلة بعد — سيتم حذف أمر التصنيع نهائياً.');
+    } else if (po.status === 'in_progress') {
+      detailParts.push(
+        'سيتم إرجاع كافة الأقمشة والكلف المصروفة لهذه التشغيلة إلى مخزن الخامات تلقائياً.'
+      );
+    } else if (po.status === 'completed') {
+      detailParts.push(
+        'سيتم خصم القطع المستلمة من مخزون المنتج التام وإرجاع الخامات المصروفة لمخزن الخامات تلقائياً (ولن يُسمح بالحذف إذا كان جزء من القطع قد تم بيعه بالفعل).'
+      );
+      if (unpaidLabor > 0) {
+        detailParts.push(
+          `كما سيتم خصم المستحق المتبقي (${formatMoney(
+            unpaidLabor,
+            state.currency
+          )}) من رصيد الورشة.`
+        );
+      }
+    } else {
+      detailParts.push('سيتم حذف سجل أمر التصنيع نهائياً.');
+    }
+
+    if (paid > 0) {
+      detailParts.push(
+        `سيتم أيضاً عكس دفعات الورشة المسجلة على هذه التشغيلة (${formatMoney(
+          paid,
+          state.currency
+        )}) من الخزنة وسجل المدفوعات.`
+      );
+    }
+
+    const ok = await confirmAction({
+      title: 'تأكيد حذف أمر التصنيع',
+      message: `هل أنت متأكد من حذف أمر التصنيع «${po.batchNumber}» (${
+        model?.name || 'موديل'
+      } — ${po.plannedQty} قطعة)؟`,
+      detail: detailParts.join(' '),
+      confirmLabel: 'نعم، احذف أمر التصنيع',
+    });
+    if (!ok) return;
+
+    if (cloudConnected) {
+      await runCloud(() => erpDb.deleteProductionOrder(prodId, po.status, paid));
+      return;
+    }
+
+    // Offline mode: validate finished-goods availability before reversing
+    if (po.status === 'completed') {
+      const targetModel = state.models.find((m) => m.id === po.modelId);
+      for (const pv of po.variants) {
+        const qtyToReverse = pv.completedQty > 0 ? pv.completedQty : pv.plannedQty;
+        if (qtyToReverse <= 0) continue;
+        const variant = targetModel?.variants.find((v) => v.id === pv.variantId);
+        if (variant && variant.finishedGoodsQty < qtyToReverse) {
+          setSyncError(
+            `لا يمكن حذف أمر التصنيع (${po.batchNumber}) لأن جزءاً من المنتج التام (${variant.variantSku} — ${variant.color} / ${variant.size}) تم بيعه أو سحبه بالفعل — الرصيد المتاح ${variant.finishedGoodsQty} أقل من الكمية المستلمة ${qtyToReverse}.`
+          );
+          if (typeof window !== 'undefined') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+          return;
+        }
+      }
+    }
+
+    setState((prev) => {
+      const target = prev.productionOrders.find((p) => p.id === prodId);
+      if (!target) return prev;
+      const targetPaid = target.paidToWorkshop || 0;
+      const targetTotalLabor = target.actualLaborCost || target.agreedLaborTotal || 0;
+      const targetUnpaid =
+        target.status === 'completed' ? Math.max(0, targetTotalLabor - targetPaid) : 0;
+
+      return {
+        ...prev,
+        models:
+          target.status === 'completed'
+            ? prev.models.map((m) =>
+                m.id !== target.modelId
+                  ? m
+                  : {
+                      ...m,
+                      variants: m.variants.map((v) => {
+                        const pv = target.variants.find((x) => x.variantId === v.id);
+                        if (!pv) return v;
+                        const qtyToReverse =
+                          pv.completedQty > 0 ? pv.completedQty : pv.plannedQty;
+                        return {
+                          ...v,
+                          finishedGoodsQty: Math.max(0, v.finishedGoodsQty - qtyToReverse),
+                        };
+                      }),
+                    }
+              )
+            : prev.models,
+        workshops:
+          target.status === 'completed' && target.workshopId && targetUnpaid > 0
+            ? prev.workshops.map((w) =>
+                w.id === target.workshopId
+                  ? { ...w, balancePayable: Math.max(0, w.balancePayable - targetUnpaid) }
+                  : w
+              )
+            : prev.workshops,
+        expenses: prev.expenses.filter(
+          (e) => !(e.isRawMaterialPurchase && e.notes === `تشغيلة ${target.batchNumber}`)
+        ),
+        productionOrders: prev.productionOrders.filter((p) => p.id !== prodId),
+      };
+    });
+  };
+
   // Sales Orders, Payments & Fulfillment
   const createSalesOrder: ERPContextValue['createSalesOrder'] = async (payload) => {
     if (cloudConnected) {
@@ -1410,6 +1589,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         importModels,
         addModelVariant,
         updateModelVariant,
+        deleteModelVariant,
         setMonthlyVolume,
         saveOverheadItem,
         deleteOverheadItem,
@@ -1420,6 +1600,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         issueProductionBatch,
         completeProductionBatch,
         recordWorkshopPayment,
+        deleteProductionBatch,
         createSalesOrder,
         confirmSalesOrder,
         recordSalesPayment,
