@@ -296,6 +296,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
     );
 
+  const extractErrorMessage = (err: unknown, fallback: string): string => {
+    if (err instanceof Error && err.message.trim()) return err.message.trim();
+    if (err && typeof err === 'object') {
+      const e = err as { message?: unknown; details?: unknown; hint?: unknown };
+      if (typeof e.message === 'string' && e.message.trim()) {
+        return e.message.trim();
+      }
+      if (typeof e.details === 'string' && e.details.trim()) {
+        return e.details.trim();
+      }
+    }
+    if (typeof err === 'string' && err.trim()) return err.trim();
+    return fallback;
+  };
+
   const refreshFromCloud = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
     setSyncing(true);
@@ -309,7 +324,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       stampSaved();
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : 'تعذر المزامنة مع PostgreSQL');
+      setSyncError(extractErrorMessage(err, 'تعذر المزامنة مع PostgreSQL'));
     } finally {
       setSyncing(false);
     }
@@ -373,7 +388,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       stampSaved();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'حدث خطأ أثناء الحفظ في قاعدة البيانات';
+      const msg = extractErrorMessage(err, 'حدث خطأ أثناء الحفظ في قاعدة البيانات');
       setSyncError(msg);
       throw err;
     } finally {
@@ -1162,10 +1177,66 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const issueProductionBatch = async (prodId: string) => {
+    const po = state.productionOrders.find((p) => p.id === prodId);
+    const model = po ? state.models.find((m) => m.id === po.modelId) : undefined;
+    let allowShortage = false;
+
+    if (po && model) {
+      const shortages: string[] = [];
+
+      // Check required fabrics
+      for (const mf of model.fabrics) {
+        const fab = state.fabrics.find((f) => f.id === mf.fabricId);
+        if (!fab) continue;
+        const reqQty =
+          Math.round(mf.consumption * (1 + mf.wastePct / 100) * po.plannedQty * 1000) / 1000;
+        if (reqQty > 0 && (fab.stockQty || 0) < reqQty) {
+          const unitLbl = fab.unit === 'kg' ? 'كجم' : 'متر';
+          shortages.push(
+            `• قماش «${fab.name}»: المطلوب ${reqQty} ${unitLbl} (المتاح بالمخزن: ${fab.stockQty || 0})`
+          );
+        }
+      }
+
+      // Check required effective trims (explicit + auto-included)
+      const explicitTrimIds = new Set(model.trims.map((t) => t.trimId));
+      const effectiveTrims: { trimId: string; quantity: number }[] = [
+        ...model.trims.map((t) => ({ trimId: t.trimId, quantity: t.quantity })),
+        ...state.trims
+          .filter((t) => Boolean(t.autoIncludeInBom) && !explicitTrimIds.has(t.id))
+          .map((t) => ({ trimId: t.id, quantity: t.defaultQtyPerPiece ?? 1 })),
+      ].filter((t) => t.quantity > 0);
+
+      for (const et of effectiveTrims) {
+        const tr = state.trims.find((t) => t.id === et.trimId);
+        if (!tr) continue;
+        const reqQty = Math.round(et.quantity * po.plannedQty * 1000) / 1000;
+        if (reqQty > 0 && (tr.stockQty || 0) < reqQty) {
+          shortages.push(
+            `• «${tr.name}»: المطلوب ${reqQty} ${tr.unitLabel} (المتاح بالمخزن: ${tr.stockQty || 0})`
+          );
+        }
+      }
+
+      if (shortages.length > 0) {
+        const ok = await confirmAction({
+          title: 'تنبيه: رصيد بعض الخامات أو الكلف غير كافٍ بالمخزن',
+          message: `تشغيلة «${po.batchNumber}» (${model.name} — ${po.plannedQty} قطعة) تحتاج خامات/كلف رصيدها الحالي غير كافٍ في المخزن. يمكنك التراجع لإضافة الرصيد من شاشة «الخامات والكلف» أو «المشتريات»، أو المتابعة بالصرف الآن.`,
+          detail: shortages.join('  |  '),
+          confirmLabel: 'تأكيد الصرف والمتابعة رغم العجز',
+          cancelLabel: 'تراجع (لإضافة الرصيد أولاً)',
+          tone: 'warning',
+        });
+        if (!ok) return;
+        allowShortage = true;
+      }
+    }
+
     if (cloudConnected) {
-      await runCloud(() => erpDb.issueProductionOrder(prodId));
+      await runCloud(() => erpDb.issueProductionOrder(prodId, allowShortage));
       return;
     }
+
     setState((prev) => ({
       ...prev,
       productionOrders: prev.productionOrders.map((p) =>

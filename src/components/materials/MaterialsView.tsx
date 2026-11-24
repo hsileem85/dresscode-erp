@@ -1020,6 +1020,25 @@ export const MaterialsView: React.FC = () => {
 
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
+                الرصيد المتاح حالياً بالمخزن ({FABRIC_UNIT_LABELS[fabricForm.unit]})
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={fabricForm.stockQty ?? 0}
+                onChange={(e) =>
+                  setFabricForm({
+                    ...fabricForm,
+                    stockQty: Math.max(0, Number(e.target.value) || 0),
+                  })
+                }
+                className="w-full rounded-xl border border-[#E5E3DD] bg-[#FBF8F4] px-3.5 py-2.5 text-sm font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
                 ملاحظات
               </label>
               <textarea
@@ -1231,6 +1250,25 @@ export const MaterialsView: React.FC = () => {
                 onChange={(e) => setTrimForm({ ...trimForm, unitLabel: e.target.value })}
                 placeholder="مثال: قطعة / متر / بكرة / شنطة / تيكت"
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
+                الرصيد المتاح بالمخزن ({trimForm.unitLabel || 'قطعة'})
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={trimForm.stockQty ?? 0}
+                onChange={(e) =>
+                  setTrimForm({
+                    ...trimForm,
+                    stockQty: Math.max(0, Number(e.target.value) || 0),
+                  })
+                }
+                className="w-full rounded-xl border border-[#E5E3DD] bg-[#FBF8F4] px-3.5 py-2.5 text-sm font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"
               />
             </div>
 

@@ -1032,9 +1032,207 @@ export const erpDb = {
     return id;
   },
 
-  async issueProductionOrder(prodId: string) {
-    const { error } = await db().rpc('issue_production_order', { p_prod_id: prodId });
-    if (error) throw error;
+  async issueProductionOrder(prodId: string, allowShortage = false) {
+    const client = db();
+    if (!allowShortage) {
+      const { error } = await client.rpc('issue_production_order', { p_prod_id: prodId });
+      if (error) throw error;
+      return;
+    }
+
+    const { error } = await client.rpc('issue_production_order', {
+      p_prod_id: prodId,
+      p_allow_shortage: true,
+    });
+    if (!error) return;
+
+    const missingOverload =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('issue_production_order');
+
+    if (!missingOverload) throw error;
+
+    // Seamless fallback if Migration 013 hasn't been executed yet in Supabase
+    const { data: prod, error: prodErr } = await client
+      .from('production_orders')
+      .select('*')
+      .eq('id', prodId)
+      .single();
+    if (prodErr || !prod) throw prodErr || new Error('أمر التصنيع غير موجود');
+    if (prod.status !== 'planned') {
+      throw new Error(`أمر التصنيع (${prod.batch_number}) يجب أن يكون في حالة تجهيز القص`);
+    }
+
+    const plannedQty = Number(prod.planned_qty) || 0;
+    const [mFabRes, mTrimRes, autoTrimRes, mLaborRes, existingLogsRes] = await Promise.all([
+      client
+        .from('model_fabrics')
+        .select('fabric_id, consumption, waste_pct')
+        .eq('model_id', prod.model_id),
+      client
+        .from('model_trims')
+        .select('trim_id, quantity')
+        .eq('model_id', prod.model_id),
+      client
+        .from('trims')
+        .select('id, stock_qty, unit_cost, auto_include_in_bom, default_qty_per_piece')
+        .eq('auto_include_in_bom', true),
+      client
+        .from('model_labor_steps')
+        .select('*')
+        .eq('model_id', prod.model_id)
+        .order('sequence_order'),
+      client
+        .from('production_workshop_logs')
+        .select('id')
+        .eq('production_order_id', prodId)
+        .limit(1),
+    ]);
+
+    if (mFabRes.error) throw mFabRes.error;
+    if (mTrimRes.error) throw mTrimRes.error;
+    if (mLaborRes.error) throw mLaborRes.error;
+
+    let matCost = 0;
+
+    // 1) Deduct available fabrics
+    const fabricIds = (mFabRes.data || []).map((r) => r.fabric_id);
+    if (fabricIds.length > 0) {
+      const { data: fabRows, error: fabErr } = await client
+        .from('fabrics')
+        .select('id, stock_qty, price_per_unit')
+        .in('id', fabricIds);
+      if (fabErr) throw fabErr;
+      const fabMap = new Map((fabRows || []).map((f) => [f.id, f]));
+
+      for (const mf of mFabRes.data || []) {
+        const fab = fabMap.get(mf.fabric_id);
+        if (!fab) continue;
+        const reqQty =
+          Math.round(
+            Number(mf.consumption) * (1 + Number(mf.waste_pct) / 100) * plannedQty * 1000
+          ) / 1000;
+        if (reqQty <= 0) continue;
+        const curStock = Number(fab.stock_qty) || 0;
+        const price = Number(fab.price_per_unit) || 0;
+        const deductQty = Math.min(Math.max(curStock, 0), reqQty);
+        matCost += reqQty * price;
+
+        if (deductQty > 0) {
+          const nextStock = Math.round((curStock - deductQty) * 1000) / 1000;
+          fab.stock_qty = nextStock;
+          const { error: uErr } = await client
+            .from('fabrics')
+            .update({ stock_qty: nextStock })
+            .eq('id', mf.fabric_id);
+          if (uErr) throw uErr;
+
+          await client.from('inventory_movements').insert({
+            item_type: 'fabric',
+            fabric_id: mf.fabric_id,
+            movement_type: 'production_issue',
+            qty_delta: -deductQty,
+            unit_cost: price,
+            reference_type: 'production_order',
+            reference_id: prodId,
+            notes: `صرف للتصنيع ${prod.batch_number}`,
+          });
+        }
+      }
+    }
+
+    // 2) Deduct available effective trims (explicit + auto-included)
+    const explicitTrimIds = new Set((mTrimRes.data || []).map((t) => t.trim_id));
+    const effectiveTrims: { trimId: string; quantity: number }[] = [
+      ...(mTrimRes.data || []).map((t) => ({
+        trimId: t.trim_id as string,
+        quantity: Number(t.quantity) || 0,
+      })),
+      ...((autoTrimRes.error ? [] : autoTrimRes.data) || [])
+        .filter((t) => !explicitTrimIds.has(t.id))
+        .map((t) => ({
+          trimId: t.id as string,
+          quantity: Number(t.default_qty_per_piece ?? 1) || 0,
+        })),
+    ].filter((t) => t.quantity > 0);
+
+    const trimIds = Array.from(new Set(effectiveTrims.map((t) => t.trimId)));
+    if (trimIds.length > 0) {
+      const { data: trimRows, error: trimErr } = await client
+        .from('trims')
+        .select('id, stock_qty, unit_cost')
+        .in('id', trimIds);
+      if (trimErr) throw trimErr;
+      const trimMap = new Map((trimRows || []).map((t) => [t.id, t]));
+
+      for (const et of effectiveTrims) {
+        const tr = trimMap.get(et.trimId);
+        if (!tr) continue;
+        const reqQty = Math.round(et.quantity * plannedQty * 1000) / 1000;
+        if (reqQty <= 0) continue;
+        const curStock = Number(tr.stock_qty) || 0;
+        const unitCost = Number(tr.unit_cost) || 0;
+        const deductQty = Math.min(Math.max(curStock, 0), reqQty);
+        matCost += reqQty * unitCost;
+
+        if (deductQty > 0) {
+          const nextStock = Math.round((curStock - deductQty) * 1000) / 1000;
+          tr.stock_qty = nextStock;
+          const { error: uErr } = await client
+            .from('trims')
+            .update({ stock_qty: nextStock })
+            .eq('id', et.trimId);
+          if (uErr) throw uErr;
+
+          await client.from('inventory_movements').insert({
+            item_type: 'trim',
+            trim_id: et.trimId,
+            movement_type: 'production_issue',
+            qty_delta: -deductQty,
+            unit_cost: unitCost,
+            reference_type: 'production_order',
+            reference_id: prodId,
+            notes: `صرف للتصنيع ${prod.batch_number}`,
+          });
+        }
+      }
+    }
+
+    // 3) Copy BOM labor steps into workshop logs if none exist yet
+    if ((existingLogsRes.data || []).length === 0 && (mLaborRes.data || []).length > 0) {
+      const logsPayload = (mLaborRes.data || []).map((step) => {
+        const stepCost = Number(step.cost) || 0;
+        const batchSize = Math.max(1, Number(step.batch_size) || 1);
+        const stepTotal =
+          step.billing_type === 'per_batch'
+            ? (stepCost / batchSize) * plannedQty
+            : stepCost * plannedQty;
+        return {
+          production_order_id: prodId,
+          workshop_id: step.workshop_id || null,
+          workshop_name: step.workshop_name || 'ورشة خارجية',
+          step_name: step.name,
+          billing_type: step.billing_type,
+          agreed_cost: stepCost,
+          batch_size: batchSize,
+          total_step_cost: Math.round(stepTotal * 100) / 100,
+        };
+      });
+      const { error: logErr } = await client.from('production_workshop_logs').insert(logsPayload);
+      if (logErr) throw logErr;
+    }
+
+    // 4) Mark production order in_progress
+    const { error: updErr } = await client
+      .from('production_orders')
+      .update({
+        status: 'in_progress',
+        started_at: new Date().toISOString(),
+        actual_material_cost: Math.round(matCost * 100) / 100,
+      })
+      .eq('id', prodId);
+    if (updErr) throw updErr;
   },
 
   async completeProductionOrder(prodId: string) {
