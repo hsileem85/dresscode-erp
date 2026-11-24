@@ -796,6 +796,15 @@ export const erpDb = {
     if (error) throw error;
   },
 
+  async updateAllModelsTargetMargin(targetMarginPct: number) {
+    const safe = Math.max(0, Math.round((Number(targetMarginPct) || 0) * 100) / 100);
+    const { error } = await db()
+      .from('models')
+      .update({ target_margin_pct: safe })
+      .not('id', 'is', null);
+    if (error) throw error;
+  },
+
   async createVariant(v: Omit<ModelVariant, 'id'>) {
     const id = newUuid();
     const { error } = await db().from('model_variants').insert({

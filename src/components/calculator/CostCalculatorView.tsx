@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import {
   Building,
+  Check,
+  Layers,
   Plus,
   Printer,
   Sliders,
@@ -26,6 +28,7 @@ import {
 } from '../../utils/calculations';
 
 const CHART_COLORS = ['#1A1A1E', '#A67C52', '#8E8B82', '#D4B896', '#3D6B59'];
+const ALL_MODELS_VALUE = '__all__';
 
 export const CostCalculatorView: React.FC = () => {
   const {
@@ -36,6 +39,7 @@ export const CostCalculatorView: React.FC = () => {
     saveOverheadItem,
     deleteOverheadItem,
     saveModel,
+    applyTargetMarginToAllModels,
   } = useERP();
 
   const activeModel = useMemo(
@@ -43,26 +47,76 @@ export const CostCalculatorView: React.FC = () => {
     [state.models, selectedModelId]
   );
 
+  const [allModelsSelected, setAllModelsSelected] = useState(false);
   const [pricingMode, setPricingMode] = useState<'markup' | 'margin'>('markup');
   const [simulatedPct, setSimulatedPct] = useState<number>(
     activeModel?.targetMarginPct ?? 65
   );
+  const [applyingAll, setApplyingAll] = useState(false);
+  const [appliedAllFeedback, setAppliedAllFeedback] = useState(false);
   const [newOverheadName, setNewOverheadName] = useState('');
   const [newOverheadCategory, setNewOverheadCategory] =
     useState<OverheadItem['category']>('other');
   const [newOverheadAmount, setNewOverheadAmount] = useState<number>(0);
 
   const handleModelChange = (id: string) => {
+    if (id === ALL_MODELS_VALUE) {
+      setAllModelsSelected(true);
+      return;
+    }
+    setAllModelsSelected(false);
     setSelectedModelId(id);
     const m = state.models.find((x) => x.id === id);
-    if (m) setSimulatedPct(m.targetMarginPct);
+    if (m) {
+      if (pricingMode === 'margin') {
+        const equivMargin = Math.min(
+          85,
+          Math.max(0, Math.round((m.targetMarginPct / (100 + m.targetMarginPct)) * 100))
+        );
+        setSimulatedPct(equivMargin);
+      } else {
+        setSimulatedPct(m.targetMarginPct);
+      }
+    }
   };
+
+  const handlePricingModeChange = (mode: 'markup' | 'margin') => {
+    if (mode === pricingMode) return;
+    setPricingMode(mode);
+    if (mode === 'margin') {
+      const safeMarkup = Math.max(0, Number(simulatedPct) || 0);
+      const equivMargin = Math.min(
+        85,
+        Math.max(0, Math.round((safeMarkup / (100 + safeMarkup)) * 100))
+      );
+      setSimulatedPct(equivMargin);
+    } else {
+      const safeMargin = Math.min(Math.max(Number(simulatedPct) || 0, 0), 95);
+      const equivMarkup = Math.max(
+        0,
+        Math.round((safeMargin / (1 - safeMargin / 100)) * 100) / 100
+      );
+      setSimulatedPct(Math.round(equivMarkup));
+    }
+  };
+
+  // models.targetMarginPct stores Markup % on Cost
+  const effectiveMarkupToSave = useMemo(() => {
+    if (pricingMode === 'markup') {
+      return Math.max(0, Math.round((Number(simulatedPct) || 0) * 100) / 100);
+    }
+    const safeMargin = Math.min(Math.max(Number(simulatedPct) || 0, 0), 95);
+    return Math.max(
+      0,
+      Math.round((safeMargin / (1 - safeMargin / 100)) * 100) / 100
+    );
+  }, [pricingMode, simulatedPct]);
 
   const totalMonthlyOverhead = getTotalMonthlyOverhead(state.overhead);
   const overheadPerPiece = getOverheadPerPiece(state.overhead);
 
   const breakdown = useMemo(() => {
-    if (!activeModel) return null;
+    if (!activeModel || allModelsSelected) return null;
     return calculateModelCost(
       activeModel,
       state.fabrics,
@@ -71,7 +125,63 @@ export const CostCalculatorView: React.FC = () => {
       simulatedPct,
       pricingMode
     );
-  }, [activeModel, state.fabrics, state.trims, state.overhead, simulatedPct, pricingMode]);
+  }, [
+    activeModel,
+    allModelsSelected,
+    state.fabrics,
+    state.trims,
+    state.overhead,
+    simulatedPct,
+    pricingMode,
+  ]);
+
+  const allModelsBreakdown = useMemo(() => {
+    if (!allModelsSelected) return [];
+    return state.models.map((model) => ({
+      model,
+      breakdown: calculateModelCost(
+        model,
+        state.fabrics,
+        state.trims,
+        state.overhead,
+        simulatedPct,
+        pricingMode
+      ),
+    }));
+  }, [
+    allModelsSelected,
+    state.models,
+    state.fabrics,
+    state.trims,
+    state.overhead,
+    simulatedPct,
+    pricingMode,
+  ]);
+
+  const allModelsSummary = useMemo(() => {
+    if (allModelsBreakdown.length === 0) {
+      return { avgCost: 0, avgPrice: 0, avgProfit: 0, changedCount: 0 };
+    }
+    const count = allModelsBreakdown.length;
+    const sumCost = allModelsBreakdown.reduce((s, r) => s + r.breakdown.totalUnitCost, 0);
+    const sumPrice = allModelsBreakdown.reduce(
+      (s, r) => s + r.breakdown.suggestedRetailPrice,
+      0
+    );
+    const sumProfit = allModelsBreakdown.reduce(
+      (s, r) => s + r.breakdown.profitPerPiece,
+      0
+    );
+    const changedCount = allModelsBreakdown.filter(
+      (r) => Math.abs(r.model.targetMarginPct - effectiveMarkupToSave) > 0.009
+    ).length;
+    return {
+      avgCost: sumCost / count,
+      avgPrice: sumPrice / count,
+      avgProfit: sumProfit / count,
+      changedCount,
+    };
+  }, [allModelsBreakdown, effectiveMarkupToSave]);
 
   const pieData = useMemo(() => {
     if (!breakdown) return [];
@@ -102,7 +212,21 @@ export const CostCalculatorView: React.FC = () => {
 
   const applyMarginToModel = () => {
     if (!activeModel) return;
-    saveModel({ ...activeModel, targetMarginPct: simulatedPct });
+    saveModel({ ...activeModel, targetMarginPct: effectiveMarkupToSave });
+  };
+
+  const handleApplyToAllModels = async () => {
+    if (state.models.length === 0 || applyingAll) return;
+    setApplyingAll(true);
+    try {
+      const applied = await applyTargetMarginToAllModels(effectiveMarkupToSave);
+      if (applied) {
+        setAppliedAllFeedback(true);
+        window.setTimeout(() => setAppliedAllFeedback(false), 2600);
+      }
+    } finally {
+      setApplyingAll(false);
+    }
   };
 
   return (
@@ -289,10 +413,15 @@ export const CostCalculatorView: React.FC = () => {
                   اختر الموديل
                 </label>
                 <select
-                  value={activeModel?.id || ''}
+                  value={allModelsSelected ? ALL_MODELS_VALUE : activeModel?.id || ''}
                   onChange={(e) => handleModelChange(e.target.value)}
                   className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3.5 py-2.5 text-sm font-semibold text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
                 >
+                  {state.models.length > 0 && (
+                    <option value={ALL_MODELS_VALUE}>
+                      كل الموديلات ({state.models.length} موديل)
+                    </option>
+                  )}
                   {state.models.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name} ({m.sku})
@@ -308,7 +437,7 @@ export const CostCalculatorView: React.FC = () => {
                 <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-[#F3F2EE] p-1">
                   <button
                     type="button"
-                    onClick={() => setPricingMode('markup')}
+                    onClick={() => handlePricingModeChange('markup')}
                     className={`py-2 px-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer ${
                       pricingMode === 'markup'
                         ? 'bg-[#1A1A1E] text-white'
@@ -319,7 +448,7 @@ export const CostCalculatorView: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPricingMode('margin')}
+                    onClick={() => handlePricingModeChange('margin')}
                     className={`py-2 px-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all cursor-pointer ${
                       pricingMode === 'margin'
                         ? 'bg-[#1A1A1E] text-white'
@@ -335,45 +464,261 @@ export const CostCalculatorView: React.FC = () => {
             {/* Target Margin Slider */}
             <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 sm:p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-bold text-[#7B5836]">
-                  {pricingMode === 'markup'
-                    ? 'نسبة الإضافة على التكلفة (Markup %)'
-                    : 'هامش الربح المستهدف من سعر البيع (Profit Margin %)'}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-lg font-extrabold text-[#8E6742] tabular-nums">
-                    {simulatedPct}%
+                <div>
+                  <span className="text-xs font-bold text-[#7B5836]">
+                    {pricingMode === 'markup'
+                      ? 'نسبة الإضافة على التكلفة (Markup %)'
+                      : 'هامش الربح المستهدف من سعر البيع (Profit Margin %)'}
                   </span>
-                  {activeModel && simulatedPct !== activeModel.targetMarginPct && (
-                    <button
-                      type="button"
-                      onClick={applyMarginToModel}
-                      className="text-[11px] font-semibold bg-[#A67C52] hover:bg-[#8E6742] text-white px-2.5 py-1 rounded-lg cursor-pointer no-print"
-                    >
-                      اعتماد للموديل
-                    </button>
+                  {pricingMode === 'margin' && (
+                    <div className="text-[10px] text-[#8E6742]/90 mt-0.5 tabular-nums">
+                      يعادل نسبة إضافة على التكلفة (Markup): {effectiveMarkupToSave}%
+                    </div>
                   )}
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-1 rounded-lg border border-[#E6D5C3] bg-white px-2 py-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={pricingMode === 'margin' ? 95 : 500}
+                      step={1}
+                      value={simulatedPct}
+                      onChange={(e) => {
+                        const raw = Number(e.target.value);
+                        const maxVal = pricingMode === 'margin' ? 95 : 500;
+                        const clamped = Number.isNaN(raw)
+                          ? 0
+                          : Math.min(maxVal, Math.max(0, raw));
+                        setSimulatedPct(clamped);
+                      }}
+                      aria-label="نسبة التسعير المئوية"
+                      className="w-14 text-center text-base font-extrabold text-[#8E6742] tabular-nums focus:outline-none"
+                    />
+                    <span className="text-sm font-bold text-[#8E6742]">%</span>
+                  </div>
+
+                  {!allModelsSelected &&
+                    activeModel &&
+                    Math.abs(effectiveMarkupToSave - activeModel.targetMarginPct) > 0.009 && (
+                      <button
+                        type="button"
+                        onClick={applyMarginToModel}
+                        className="text-[11px] font-semibold bg-[#A67C52] hover:bg-[#8E6742] text-white px-2.5 py-1.5 rounded-lg cursor-pointer no-print transition-colors"
+                      >
+                        اعتماد للموديل
+                      </button>
+                    )}
+                </div>
               </div>
+
               <input
                 type="range"
-                min={10}
+                min={0}
                 max={pricingMode === 'margin' ? 85 : 200}
                 step={1}
-                value={simulatedPct}
+                value={Math.min(simulatedPct, pricingMode === 'margin' ? 85 : 200)}
                 onChange={(e) => setSimulatedPct(Number(e.target.value))}
                 className="w-full bronze-slider cursor-pointer"
               />
               <div className="flex justify-between text-[10px] text-[#7B5836]/80 tabular-nums">
-                <span>10%</span>
+                <span>0%</span>
                 <span>50%</span>
                 <span>{pricingMode === 'margin' ? '85%' : '120%'}</span>
                 {pricingMode === 'markup' && <span>200%</span>}
               </div>
+
+              {/* Bulk Apply Action Bar */}
+              {state.models.length > 0 && (
+                <div className="pt-2.5 border-t border-[#E6D5C3]/70 flex flex-wrap items-center justify-between gap-2 no-print">
+                  <span className="text-[11px] text-[#7B5836]">
+                    {allModelsSelected
+                      ? `وضع التسعير الجماعي نشط — سيُعتمد (${effectiveMarkupToSave}%) على كافة الموديلات`
+                      : 'يمكنك تطبيق هذه النسبة على كافة الموديلات دفعة واحدة:'}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={applyingAll}
+                    onClick={handleApplyToAllModels}
+                    className={`inline-flex items-center justify-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-60 ${
+                      appliedAllFeedback
+                        ? 'bg-[#3D6B59] text-white'
+                        : allModelsSelected
+                          ? 'bg-[#1A1A1E] hover:bg-[#2E2E35] text-white'
+                          : 'bg-[#A67C52] hover:bg-[#8E6742] text-white'
+                    }`}
+                  >
+                    {appliedAllFeedback ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>تم تطبيق {effectiveMarkupToSave}% على كل الموديلات</span>
+                      </>
+                    ) : (
+                      <>
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>
+                          {applyingAll
+                            ? 'جارٍ التطبيق...'
+                            : `تطبيق (${effectiveMarkupToSave}%) على كل الموديلات (${state.models.length})`}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* Detailed Cost Breakdown + Pie Chart */}
-            {breakdown && activeModel && (
+            {/* All Models Pricing Simulation View */}
+            {allModelsSelected && (
+              <div className="space-y-4 pt-1">
+                {/* Summary KPI Strip */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="rounded-xl bg-[#FAF9F7] border border-[#E5E3DD] p-3">
+                    <div className="text-[10px] text-[#6E6C66]">إجمالي الموديلات</div>
+                    <div className="text-base font-extrabold text-[#1A1A1E] tabular-nums mt-0.5">
+                      {state.models.length}
+                    </div>
+                    <div className="text-[10px] text-[#8E6742] mt-0.5">
+                      {allModelsSummary.changedCount > 0
+                        ? `${allModelsSummary.changedCount} سيتغير تسعيرها`
+                        : 'جميعها على نفس النسبة'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-[#FAF9F7] border border-[#E5E3DD] p-3">
+                    <div className="text-[10px] text-[#6E6C66]">متوسط التكلفة للقطعة</div>
+                    <div className="text-sm sm:text-base font-extrabold text-[#1A1A1E] tabular-nums mt-0.5">
+                      {formatMoney(allModelsSummary.avgCost, state.currency)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-[#1A1A1E] text-white p-3">
+                    <div className="text-[10px] text-[#D4B896]">متوسط السعر المقترح</div>
+                    <div className="text-sm sm:text-base font-extrabold text-[#BD956D] tabular-nums mt-0.5">
+                      {formatMoney(allModelsSummary.avgPrice, state.currency)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-[#F2F7F4] border border-[#D4E6DC] p-3">
+                    <div className="text-[10px] text-[#3D6B59]">متوسط الربح للقطعة</div>
+                    <div className="text-sm sm:text-base font-extrabold text-[#2D5546] tabular-nums mt-0.5">
+                      {formatMoney(allModelsSummary.avgProfit, state.currency)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Desktop Table */}
+                <div className="hidden sm:block overflow-x-auto rounded-xl border border-[#E5E3DD]">
+                  <table className="w-full text-right text-xs">
+                    <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
+                      <tr>
+                        <th className="py-2.5 px-3 font-semibold">الموديل</th>
+                        <th className="py-2.5 px-3 font-semibold text-center">النسبة الحالية</th>
+                        <th className="py-2.5 px-3 font-semibold">التكلفة للقطعة</th>
+                        <th className="py-2.5 px-3 font-semibold">السعر المقترح الجديد</th>
+                        <th className="py-2.5 px-3 font-semibold">صافي الربح</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F0EFEA]">
+                      {allModelsBreakdown.map(({ model, breakdown: mb }) => {
+                        const willChange =
+                          Math.abs(model.targetMarginPct - effectiveMarkupToSave) > 0.009;
+                        return (
+                          <tr
+                            key={model.id}
+                            onClick={() => handleModelChange(model.id)}
+                            title="اضغط لعرض تفصيل هذا الموديل"
+                            className="hover:bg-[#FBF8F4] transition-colors cursor-pointer"
+                          >
+                            <td className="py-2.5 px-3">
+                              <div className="font-bold text-[#1A1A1E]">{model.name}</div>
+                              <div className="text-[10px] text-[#6E6C66]">{model.sku}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center tabular-nums">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                                  willChange
+                                    ? 'bg-[#F6EFE7] text-[#8E6742]'
+                                    : 'bg-[#F2F7F4] text-[#3D6B59]'
+                                }`}
+                              >
+                                {model.targetMarginPct}%
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-[#1A1A1E] tabular-nums">
+                              {formatMoney(mb.totalUnitCost, state.currency)}
+                            </td>
+                            <td className="py-2.5 px-3 font-extrabold text-[#8E6742] tabular-nums">
+                              {formatMoney(mb.suggestedRetailPrice, state.currency)}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-[#3D6B59] tabular-nums">
+                              {formatMoney(mb.profitPerPiece, state.currency)}
+                              <span className="text-[10px] text-[#6E6C66] mr-1">
+                                ({formatNumber(mb.effectiveMarginOnPricePct, 1)}%)
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile Cards */}
+                <div className="sm:hidden space-y-2.5">
+                  {allModelsBreakdown.map(({ model, breakdown: mb }) => {
+                    const willChange =
+                      Math.abs(model.targetMarginPct - effectiveMarkupToSave) > 0.009;
+                    return (
+                      <button
+                        key={model.id}
+                        type="button"
+                        onClick={() => handleModelChange(model.id)}
+                        className="w-full text-right rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] p-3 space-y-2 hover:border-[#A67C52] transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-[#1A1A1E] truncate">
+                              {model.name}
+                            </div>
+                            <div className="text-[10px] text-[#6E6C66]">{model.sku}</div>
+                          </div>
+                          <span
+                            className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold tabular-nums ${
+                              willChange
+                                ? 'bg-[#F6EFE7] text-[#8E6742]'
+                                : 'bg-[#F2F7F4] text-[#3D6B59]'
+                            }`}
+                          >
+                            الحالي {model.targetMarginPct}%
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#EAE8E2] text-[11px]">
+                          <div>
+                            <div className="text-[10px] text-[#6E6C66]">التكلفة</div>
+                            <div className="font-bold text-[#1A1A1E] tabular-nums">
+                              {formatMoney(mb.totalUnitCost, state.currency)}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-[#7B5836]">السعر المقترح</div>
+                            <div className="font-extrabold text-[#8E6742] tabular-nums">
+                              {formatMoney(mb.suggestedRetailPrice, state.currency)}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-[#3D6B59]">الربح</div>
+                            <div className="font-bold text-[#3D6B59] tabular-nums">
+                              {formatMoney(mb.profitPerPiece, state.currency)}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Detailed Cost Breakdown + Pie Chart (Single Model Mode) */}
+            {!allModelsSelected && breakdown && activeModel && (
               <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center pt-2">
                 {/* Breakdown Lines */}
                 <div className="md:col-span-7 space-y-2.5">

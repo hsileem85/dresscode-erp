@@ -99,6 +99,7 @@ interface ERPContextValue {
   deleteModel: (id: string) => void;
   duplicateModel: (id: string) => void;
   importModels: (models: ProductModel[]) => void;
+  applyTargetMarginToAllModels: (targetMarginPct: number) => Promise<boolean>;
   addModelVariant: (variant: Omit<ModelVariant, 'id'>) => Promise<void>;
   updateModelVariant: (variant: ModelVariant) => Promise<void>;
   deleteModelVariant: (variantId: string) => Promise<void>;
@@ -808,6 +809,35 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     void runCloud(async () => {
       for (const m of models) await erpDb.upsertModel(m);
     });
+  };
+
+  const applyTargetMarginToAllModels = async (targetMarginPct: number): Promise<boolean> => {
+    if (state.models.length === 0) return false;
+    const safe = Math.max(0, Math.round((Number(targetMarginPct) || 0) * 100) / 100);
+    const ok = await confirmAction({
+      title: 'تأكيد تطبيق نسبة الإضافة على كافة الموديلات',
+      message: `هل أنت متأكد من تطبيق نسبة الإضافة على التكلفة (${safe}%) على جميع الموديلات (${state.models.length} موديل)؟`,
+      detail:
+        'سيتم تحديث نسبة الربح المستهدفة (Markup %) وسعر البيع المقترح لجميع الموديلات دفعة واحدة.',
+      confirmLabel: `نعم، طبّق (${safe}%) على الكل`,
+      tone: 'warning',
+    });
+    if (!ok) return false;
+
+    const today = new Date().toISOString().slice(0, 10);
+    setState((prev) => ({
+      ...prev,
+      models: prev.models.map((m) => ({
+        ...m,
+        targetMarginPct: safe,
+        updatedAt: today,
+      })),
+    }));
+
+    if (cloudConnected) {
+      await runCloud(() => erpDb.updateAllModelsTargetMargin(safe));
+    }
+    return true;
   };
 
   const addModelVariant = async (variant: Omit<ModelVariant, 'id'>) => {
@@ -1959,6 +1989,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteModel,
         duplicateModel,
         importModels,
+        applyTargetMarginToAllModels,
         addModelVariant,
         updateModelVariant,
         deleteModelVariant,
