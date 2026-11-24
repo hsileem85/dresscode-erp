@@ -102,10 +102,13 @@ export type TrimPurchaseUnit =
   | 'cone'
   | 'weight';
 
+export type TrimSupplyGroup = 'trims' | 'manufacturing' | 'brand';
+
 export interface TrimAccessory {
   id: string;
   name: string;
   category: string;
+  supplyGroup?: TrimSupplyGroup;
   supplierId?: string | null;
   supplier: string;
   purchaseUnit: TrimPurchaseUnit;

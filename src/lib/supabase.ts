@@ -212,6 +212,12 @@ export async function fetchFullERPState(): Promise<{
     id: r.id,
     name: r.name,
     category: r.category || 'إكسسوارات',
+    supplyGroup:
+      r.supply_group === 'trims' ||
+      r.supply_group === 'manufacturing' ||
+      r.supply_group === 'brand'
+        ? r.supply_group
+        : undefined,
     supplierId: r.supplier_id,
     supplier: r.supplier_name || 'مورد عام',
     purchaseUnit: r.purchase_unit,
@@ -621,7 +627,7 @@ export const erpDb = {
   },
 
   async upsertTrim(t: TrimAccessory) {
-    const { error } = await db().from('trims').upsert({
+    const baseRow = {
       id: t.id,
       name: t.name,
       category: t.category,
@@ -636,8 +642,27 @@ export const erpDb = {
       auto_include_in_bom: Boolean(t.autoIncludeInBom),
       default_qty_per_piece: Math.max(0, Number(t.defaultQtyPerPiece ?? 1) || 0),
       notes: t.notes || null,
+    };
+
+    const { error } = await db().from('trims').upsert({
+      ...baseRow,
+      supply_group: t.supplyGroup || null,
     });
-    if (error) throw error;
+    if (!error) return;
+
+    const missingCol =
+      error.code === 'PGRST204' ||
+      error.code === '42703' ||
+      error.message?.includes('supply_group') ||
+      error.message?.includes('column');
+
+    if (missingCol) {
+      const retry = await db().from('trims').upsert(baseRow);
+      if (retry.error) throw retry.error;
+      return;
+    }
+
+    throw error;
   },
 
   async deleteTrim(id: string) {

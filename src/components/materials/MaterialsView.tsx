@@ -5,7 +5,9 @@ import {
   Layers,
   PackageOpen,
   Plus,
+  Scissors,
   Search,
+  ShoppingBag,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -17,6 +19,7 @@ import type {
   FabricUnit,
   TrimAccessory,
   TrimPurchaseUnit,
+  TrimSupplyGroup,
 } from '../../types/erp';
 import {
   FABRIC_UNIT_LABELS,
@@ -27,7 +30,163 @@ import {
 } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
-type SubTab = 'fabrics' | 'trims';
+type SubTab = 'fabrics' | TrimSupplyGroup;
+
+const BRAND_KEYWORDS = [
+  'براند',
+  'تيكت',
+  'تغليف',
+  'هوية',
+  'شنط',
+  'شنطة',
+  'كيس',
+  'أكياس',
+  'اكياس',
+  'كرت',
+  'كروت',
+  'ستيكر',
+  'ليبل',
+  'شكر',
+];
+
+const MANUFACTURING_KEYWORDS = [
+  'تصنيع',
+  'باترون',
+  'مقص',
+  'خيوط',
+  'خيط',
+  'بكر',
+  'بكرة',
+  'إبر',
+  'ابر',
+  'دبوس',
+  'دبابيس',
+  'طباشير',
+  'ماركر',
+  'مازورة',
+  'مسطرة',
+  'شريط قياس',
+  'أدوات',
+  'ادوات',
+];
+
+function getTrimSupplyGroup(trim: TrimAccessory): TrimSupplyGroup {
+  if (
+    trim.supplyGroup === 'trims' ||
+    trim.supplyGroup === 'manufacturing' ||
+    trim.supplyGroup === 'brand'
+  ) {
+    return trim.supplyGroup;
+  }
+  const haystack = `${trim.category || ''} ${trim.name || ''}`.toLowerCase();
+  if (BRAND_KEYWORDS.some((kw) => haystack.includes(kw))) {
+    return 'brand';
+  }
+  if (MANUFACTURING_KEYWORDS.some((kw) => haystack.includes(kw))) {
+    return 'manufacturing';
+  }
+  return 'trims';
+}
+
+const SUPPLY_TAB_META: Record<
+  TrimSupplyGroup,
+  {
+    label: string;
+    addButtonLabel: string;
+    modalAddTitle: string;
+    modalEditTitle: string;
+    nameLabel: string;
+    namePlaceholder: string;
+    searchPlaceholder: string;
+    emptyText: string;
+    defaultCategory: string;
+    defaultPurchaseUnit: TrimPurchaseUnit;
+    defaultUnitsPerPack: number;
+    defaultUnitLabel: string;
+    defaultAutoBom: boolean;
+    extraCategories: string[];
+    presets: {
+      name: string;
+      category: string;
+      purchaseUnit: TrimPurchaseUnit;
+      unitsPerPack: number;
+      unitLabel: string;
+    }[];
+  }
+> = {
+  trims: {
+    label: 'الكلف',
+    addButtonLabel: 'إضافة كلفة / إكسسوار',
+    modalAddTitle: 'إضافة كلفة / إكسسوار جديد',
+    modalEditTitle: 'تعديل الكلفة / الإكسسوار',
+    nameLabel: 'اسم الكلفة / الإكسسوار *',
+    namePlaceholder: 'مثال: سحاب مخفي / أزرار لؤلؤ / أستيك / دانتيل',
+    searchPlaceholder: 'ابحث باسم الكلفة أو التصنيف...',
+    emptyText: 'لا توجد كلف أو إكسسوارات مطابقة للبحث.',
+    defaultCategory: 'إكسسوارات',
+    defaultPurchaseUnit: 'dozen',
+    defaultUnitsPerPack: 12,
+    defaultUnitLabel: 'قطعة',
+    defaultAutoBom: false,
+    extraCategories: ['أزرار', 'سحابات', 'إكسسوارات'],
+    presets: [
+      { name: 'أزرار', category: 'أزرار', purchaseUnit: 'dozen', unitsPerPack: 12, unitLabel: 'زر' },
+      { name: 'زراير كبس', category: 'أزرار', purchaseUnit: 'pack', unitsPerPack: 100, unitLabel: 'زر' },
+      { name: 'سحاب مخفي', category: 'سحابات', purchaseUnit: 'dozen', unitsPerPack: 12, unitLabel: 'سحاب' },
+      { name: 'أستيك / كلف إضافية', category: 'إكسسوارات', purchaseUnit: 'roll', unitsPerPack: 25, unitLabel: 'متر' },
+      { name: 'فازلين / حشو', category: 'إكسسوارات', purchaseUnit: 'roll', unitsPerPack: 50, unitLabel: 'متر' },
+    ],
+  },
+  manufacturing: {
+    label: 'مستلزمات التصنيع',
+    addButtonLabel: 'إضافة مستلزم تصنيع',
+    modalAddTitle: 'إضافة مستلزم تصنيع جديد',
+    modalEditTitle: 'تعديل مستلزم التصنيع',
+    nameLabel: 'اسم مستلزم التصنيع *',
+    namePlaceholder: 'مثال: ورق باترون كرافت / مقص قماش / خيوط أوفرلوك / إبر ماكينة',
+    searchPlaceholder: 'ابحث في مستلزمات التصنيع (باترون، مقص، خيوط...)',
+    emptyText: 'لا توجد مستلزمات تصنيع مسجلة بعد — اضغط «إضافة مستلزم تصنيع» للبدء.',
+    defaultCategory: 'مستلزمات التصنيع',
+    defaultPurchaseUnit: 'piece',
+    defaultUnitsPerPack: 1,
+    defaultUnitLabel: 'قطعة',
+    defaultAutoBom: false,
+    extraCategories: ['مستلزمات التصنيع', 'ورق باترون وأدوات قص', 'خيوط'],
+    presets: [
+      { name: 'ورق باترون كرافت', category: 'ورق باترون وأدوات قص', purchaseUnit: 'roll', unitsPerPack: 50, unitLabel: 'متر' },
+      { name: 'مقص قماش احترافي', category: 'ورق باترون وأدوات قص', purchaseUnit: 'piece', unitsPerPack: 1, unitLabel: 'مقص' },
+      { name: 'خيوط خياطة / أوفرلوك', category: 'خيوط', purchaseUnit: 'cone', unitsPerPack: 1, unitLabel: 'بكرة' },
+      { name: 'إبر ماكينة خياطة', category: 'مستلزمات التصنيع', purchaseUnit: 'pack', unitsPerPack: 10, unitLabel: 'إبرة' },
+      { name: 'دبابيس وطباشير قص', category: 'ورق باترون وأدوات قص', purchaseUnit: 'box', unitsPerPack: 1, unitLabel: 'علبة' },
+      { name: 'مازورة / مسطرة باترون', category: 'ورق باترون وأدوات قص', purchaseUnit: 'piece', unitsPerPack: 1, unitLabel: 'قطعة' },
+    ],
+  },
+  brand: {
+    label: 'مستلزمات البراند',
+    addButtonLabel: 'إضافة مستلزم براند',
+    modalAddTitle: 'إضافة مستلزم براند وتغليف جديد',
+    modalEditTitle: 'تعديل مستلزم البراند والتغليف',
+    nameLabel: 'اسم مستلزم البراند / التغليف *',
+    namePlaceholder: 'مثال: شنط البراند / كيس تغليف / تيكت منسوج / كروت شكر',
+    searchPlaceholder: 'ابحث في مستلزمات البراند (شنط، تغليف، تيكت، كروت...)',
+    emptyText: 'لا توجد مستلزمات براند وتغليف مسجلة بعد — اضغط «إضافة مستلزم براند» للبدء.',
+    defaultCategory: 'التغليف والهوية',
+    defaultPurchaseUnit: 'pack',
+    defaultUnitsPerPack: 100,
+    defaultUnitLabel: 'قطعة',
+    defaultAutoBom: true,
+    extraCategories: ['تيكت وهوية البراند', 'التغليف والهوية', 'شنط وكروت البراند'],
+    presets: [
+      { name: 'شنط البراند', category: 'شنط وكروت البراند', purchaseUnit: 'pack', unitsPerPack: 100, unitLabel: 'شنطة' },
+      { name: 'شنطة سوستة / كيس تغليف', category: 'التغليف والهوية', purchaseUnit: 'pack', unitsPerPack: 100, unitLabel: 'كيس' },
+      { name: 'تيكت منسوج (لوجو البراند)', category: 'تيكت وهوية البراند', purchaseUnit: 'pack', unitsPerPack: 500, unitLabel: 'تيكت' },
+      { name: 'تيكت مقاس وعناية', category: 'تيكت وهوية البراند', purchaseUnit: 'pack', unitsPerPack: 500, unitLabel: 'تيكت' },
+      { name: 'كروت البراند', category: 'شنط وكروت البراند', purchaseUnit: 'pack', unitsPerPack: 250, unitLabel: 'كرت' },
+      { name: 'كروت شكر / ستيكر إغلاق', category: 'التغليف والهوية', purchaseUnit: 'pack', unitsPerPack: 250, unitLabel: 'كرت' },
+      { name: 'خيط التيكت', category: 'تيكت وهوية البراند', purchaseUnit: 'pack', unitsPerPack: 500, unitLabel: 'قطعة' },
+    ],
+  },
+};
 
 const EMPTY_FABRIC: Omit<Fabric, 'id'> = {
   name: '',
@@ -42,19 +201,23 @@ const EMPTY_FABRIC: Omit<Fabric, 'id'> = {
   notes: '',
 };
 
-const EMPTY_TRIM: Omit<TrimAccessory, 'id'> = {
-  name: '',
-  category: 'إكسسوارات',
-  supplier: '',
-  purchaseUnit: 'dozen',
-  packPrice: 0,
-  unitsPerPack: 12,
-  unitLabel: 'قطعة',
-  stockQty: 0,
-  reorderLevel: 50,
-  autoIncludeInBom: false,
-  defaultQtyPerPiece: 1,
-  notes: '',
+const buildEmptyTrimForGroup = (group: TrimSupplyGroup): Omit<TrimAccessory, 'id'> => {
+  const meta = SUPPLY_TAB_META[group];
+  return {
+    name: '',
+    category: meta.defaultCategory,
+    supplyGroup: group,
+    supplier: '',
+    purchaseUnit: meta.defaultPurchaseUnit,
+    packPrice: 0,
+    unitsPerPack: meta.defaultUnitsPerPack,
+    unitLabel: meta.defaultUnitLabel,
+    stockQty: 0,
+    reorderLevel: group === 'manufacturing' ? 5 : 50,
+    autoIncludeInBom: meta.defaultAutoBom,
+    defaultQtyPerPiece: 1,
+    notes: '',
+  };
 };
 
 export const MaterialsView: React.FC = () => {
@@ -67,10 +230,24 @@ export const MaterialsView: React.FC = () => {
   const [editingFabricId, setEditingFabricId] = useState<string | null>(null);
   const [fabricForm, setFabricForm] = useState<Omit<Fabric, 'id'>>(EMPTY_FABRIC);
 
-  // Trim modal state
+  // Trim / Supplies modal state
   const [trimModalOpen, setTrimModalOpen] = useState(false);
   const [editingTrimId, setEditingTrimId] = useState<string | null>(null);
-  const [trimForm, setTrimForm] = useState<Omit<TrimAccessory, 'id'>>(EMPTY_TRIM);
+  const [trimForm, setTrimForm] = useState<Omit<TrimAccessory, 'id'>>(() =>
+    buildEmptyTrimForGroup('trims')
+  );
+
+  const groupedTrims = useMemo(() => {
+    const groups: Record<TrimSupplyGroup, TrimAccessory[]> = {
+      trims: [],
+      manufacturing: [],
+      brand: [],
+    };
+    for (const t of state.trims) {
+      groups[getTrimSupplyGroup(t)].push(t);
+    }
+    return groups;
+  }, [state.trims]);
 
   const filteredFabrics = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -83,16 +260,20 @@ export const MaterialsView: React.FC = () => {
     );
   }, [state.fabrics, query]);
 
-  const filteredTrims = useMemo(() => {
+  const activeSupplyGroup: TrimSupplyGroup = subTab === 'fabrics' ? 'trims' : subTab;
+
+  const filteredSupplyItems = useMemo(() => {
+    const source = groupedTrims[activeSupplyGroup];
     const q = query.trim().toLowerCase();
-    if (!q) return state.trims;
-    return state.trims.filter(
+    if (!q) return source;
+    return source.filter(
       (t) =>
         t.name.toLowerCase().includes(q) ||
         t.supplier.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q)
+        t.category.toLowerCase().includes(q) ||
+        (t.notes || '').toLowerCase().includes(q)
     );
-  }, [state.trims, query]);
+  }, [groupedTrims, activeSupplyGroup, query]);
 
   const autoBomTrimsSummary = useMemo(() => {
     const autoList = state.trims.filter((t) => Boolean(t.autoIncludeInBom));
@@ -102,6 +283,24 @@ export const MaterialsView: React.FC = () => {
     );
     return { count: autoList.length, totalPerPiece };
   }, [state.trims]);
+
+  const modalSupplyGroup: TrimSupplyGroup = trimForm.supplyGroup || activeSupplyGroup;
+  const modalMeta = SUPPLY_TAB_META[modalSupplyGroup];
+  const activeTabMeta = SUPPLY_TAB_META[activeSupplyGroup];
+
+  const availableTrimCategories = useMemo(() => {
+    const base = getLookupLabels(state.lookups, 'trim_categories');
+    const extras = [
+      ...SUPPLY_TAB_META.trims.extraCategories,
+      ...SUPPLY_TAB_META.manufacturing.extraCategories,
+      ...SUPPLY_TAB_META.brand.extraCategories,
+    ];
+    const merged = Array.from(new Set([...modalMeta.extraCategories, ...base, ...extras]));
+    if (trimForm.category && !merged.includes(trimForm.category)) {
+      merged.unshift(trimForm.category);
+    }
+    return merged;
+  }, [state.lookups, modalMeta.extraCategories, trimForm.category]);
 
   const openNewFabric = () => {
     setEditingFabricId(null);
@@ -140,9 +339,9 @@ export const MaterialsView: React.FC = () => {
     setFabricModalOpen(false);
   };
 
-  const openNewTrim = () => {
+  const openNewSupplyItem = (group: TrimSupplyGroup) => {
     setEditingTrimId(null);
-    setTrimForm(EMPTY_TRIM);
+    setTrimForm(buildEmptyTrimForGroup(group));
     setTrimModalOpen(true);
   };
 
@@ -151,6 +350,7 @@ export const MaterialsView: React.FC = () => {
     setTrimForm({
       name: trim.name,
       category: trim.category,
+      supplyGroup: getTrimSupplyGroup(trim),
       supplierId: trim.supplierId,
       supplier: trim.supplier,
       purchaseUnit: trim.purchaseUnit,
@@ -169,6 +369,7 @@ export const MaterialsView: React.FC = () => {
   const toggleTrimAutoBom = (trim: TrimAccessory) => {
     saveTrim({
       ...trim,
+      supplyGroup: getTrimSupplyGroup(trim),
       autoIncludeInBom: !trim.autoIncludeInBom,
       defaultQtyPerPiece: trim.defaultQtyPerPiece ?? 1,
     });
@@ -194,9 +395,11 @@ export const MaterialsView: React.FC = () => {
   const handleTrimSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!trimForm.name.trim()) return;
+    const resolvedGroup = trimForm.supplyGroup || activeSupplyGroup;
     saveTrim({
       id: editingTrimId || newUuid(),
       ...trimForm,
+      supplyGroup: resolvedGroup,
       packPrice: Number(trimForm.packPrice) || 0,
       unitsPerPack: Math.max(1, Number(trimForm.unitsPerPack) || 1),
       autoIncludeInBom: Boolean(trimForm.autoIncludeInBom),
@@ -211,13 +414,13 @@ export const MaterialsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 bg-white p-3.5 sm:p-4 rounded-2xl border border-[#E5E3DD]">
-        <div className="grid grid-cols-2 sm:inline-flex rounded-xl bg-[#F3F2EE] p-1 w-full md:w-auto">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 sm:gap-4 bg-white p-3.5 sm:p-4 rounded-2xl border border-[#E5E3DD]">
+        <div className="grid grid-cols-2 sm:inline-flex sm:flex-wrap rounded-xl bg-[#F3F2EE] p-1 gap-1 w-full xl:w-auto">
           <button
             id="tab-fabrics"
             type="button"
             onClick={() => setSubTab('fabrics')}
-            className={`inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
               subTab === 'fabrics'
                 ? 'bg-[#1A1A1E] text-white shadow-sm'
                 : 'text-[#6E6C66] hover:text-[#1A1A1E]'
@@ -226,18 +429,47 @@ export const MaterialsView: React.FC = () => {
             <Layers className="w-4 h-4 text-[#BD956D] shrink-0" />
             <span>الأقمشة ({state.fabrics.length})</span>
           </button>
+
           <button
             id="tab-trims"
             type="button"
             onClick={() => setSubTab('trims')}
-            className={`inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
               subTab === 'trims'
                 ? 'bg-[#1A1A1E] text-white shadow-sm'
                 : 'text-[#6E6C66] hover:text-[#1A1A1E]'
             }`}
           >
             <PackageOpen className="w-4 h-4 text-[#BD956D] shrink-0" />
-            <span>الكلف ({state.trims.length})</span>
+            <span>الكلف ({groupedTrims.trims.length})</span>
+          </button>
+
+          <button
+            id="tab-manufacturing-supplies"
+            type="button"
+            onClick={() => setSubTab('manufacturing')}
+            className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+              subTab === 'manufacturing'
+                ? 'bg-[#1A1A1E] text-white shadow-sm'
+                : 'text-[#6E6C66] hover:text-[#1A1A1E]'
+            }`}
+          >
+            <Scissors className="w-4 h-4 text-[#BD956D] shrink-0" />
+            <span>مستلزمات التصنيع ({groupedTrims.manufacturing.length})</span>
+          </button>
+
+          <button
+            id="tab-brand-supplies"
+            type="button"
+            onClick={() => setSubTab('brand')}
+            className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+              subTab === 'brand'
+                ? 'bg-[#1A1A1E] text-white shadow-sm'
+                : 'text-[#6E6C66] hover:text-[#1A1A1E]'
+            }`}
+          >
+            <ShoppingBag className="w-4 h-4 text-[#BD956D] shrink-0" />
+            <span>مستلزمات البراند ({groupedTrims.brand.length})</span>
           </button>
         </div>
 
@@ -251,20 +483,24 @@ export const MaterialsView: React.FC = () => {
               placeholder={
                 subTab === 'fabrics'
                   ? 'ابحث باسم القماش أو المورد...'
-                  : 'ابحث باسم الكلفة أو التصنيف...'
+                  : activeTabMeta.searchPlaceholder
               }
               className="w-full sm:w-64 rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] pr-9 pl-3 py-2 text-sm text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
             />
           </div>
 
           <button
-            id={subTab === 'fabrics' ? 'btn-add-fabric' : 'btn-add-trim'}
+            id={subTab === 'fabrics' ? 'btn-add-fabric' : `btn-add-${subTab}`}
             type="button"
-            onClick={subTab === 'fabrics' ? openNewFabric : openNewTrim}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-sm font-semibold px-4 py-2.5 sm:py-2 transition-colors cursor-pointer"
+            onClick={() =>
+              subTab === 'fabrics' ? openNewFabric() : openNewSupplyItem(subTab)
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-sm font-semibold px-4 py-2.5 sm:py-2 transition-colors cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4" />
-            <span>{subTab === 'fabrics' ? 'إضافة قماش جديد' : 'إضافة كلفة / إكسسوار'}</span>
+            <span>
+              {subTab === 'fabrics' ? 'إضافة قماش جديد' : activeTabMeta.addButtonLabel}
+            </span>
           </button>
         </div>
       </div>
@@ -416,19 +652,37 @@ export const MaterialsView: React.FC = () => {
         </div>
       )}
 
-      {/* Trims & Accessories List (Mobile Cards + Desktop Table) */}
-      {subTab === 'trims' && (
+      {/* Trims / Manufacturing Supplies / Brand Supplies List */}
+      {subTab !== 'fabrics' && (
         <div className="space-y-3">
-          {/* Auto-BOM Info & Summary Bar */}
+          {/* Contextual Info & Auto-BOM Summary Bar */}
           <div className="rounded-2xl border border-[#E6D5C3] bg-[#FBF8F4] px-4 py-3 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs text-[#7B5836]">
-              <Sparkles className="w-4 h-4 text-[#A67C52] shrink-0" />
-              <span>
-                فعّل علامة <strong>«تلقائي في التكلفة»</strong> لأي كلفة أو تغليف أساسي (مثل الشنط والكروت وخيط التيكت) ليُحتسب تلقائياً في تكلفة كل موديل دون إضافته يدوياً.
-              </span>
+              {subTab === 'manufacturing' ? (
+                <>
+                  <Scissors className="w-4 h-4 text-[#A67C52] shrink-0" />
+                  <span>
+                    سجّل هنا <strong>مستلزمات وأدوات التصنيع</strong> (ورق الباترون، المقصات، الخيوط، الإبر، الدبابيس...) لمتابعة رصيدها وشرائها في أوامر الشراء، ويمكنك تفعيل «تلقائي في التكلفة» لأي خامة مستهلكة بالقطعة.
+                  </span>
+                </>
+              ) : subTab === 'brand' ? (
+                <>
+                  <ShoppingBag className="w-4 h-4 text-[#A67C52] shrink-0" />
+                  <span>
+                    سجّل هنا <strong>مستلزمات البراند والتغليف</strong> (الشنط، أكياس التغليف، التيكت، الكروت، خيط التيكت) وفعّل <strong>«تلقائي في التكلفة»</strong> ليُحتسب كل بند تلقائياً في تكلفة كل موديل.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 text-[#A67C52] shrink-0" />
+                  <span>
+                    سجّل هنا <strong>الكلف والإكسسوارات</strong> (الأزرار، السحابات، الأستيك، الدانتيل...) لإضافتها في بطاقات الموديلات (BOM) أو تفعيل الاحتساب التلقائي عند الحاجة.
+                  </span>
+                </>
+              )}
             </div>
             <div className="inline-flex items-center gap-2 rounded-xl bg-white border border-[#E6D5C3] px-3 py-1.5 text-xs shrink-0">
-              <span className="text-[#6E6C66]">التلقائي حالياً:</span>
+              <span className="text-[#6E6C66]">التلقائي بالنظام:</span>
               <span className="font-bold text-[#1A1A1E]">
                 {autoBomTrimsSummary.count} {autoBomTrimsSummary.count === 1 ? 'بند' : 'بنود'}
               </span>
@@ -440,187 +694,195 @@ export const MaterialsView: React.FC = () => {
           </div>
 
           <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-          <div className="md:hidden divide-y divide-[#F0EFEA]">
-            {filteredTrims.map((trim) => {
-              const unitCost = getTrimUnitCost(trim);
-              const isAuto = Boolean(trim.autoIncludeInBom);
-              const autoQty = trim.defaultQtyPerPiece ?? 1;
-              return (
-                <div key={trim.id} className="p-3.5 space-y-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-bold text-sm text-[#1A1A1E]">{trim.name}</div>
-                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                        <span className="inline-flex px-2 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-[11px] font-medium">
-                          {trim.category}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => toggleTrimAutoBom(trim)}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
-                            isAuto
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-[#F3F2EE] text-[#6E6C66] border border-[#E5E3DD]'
-                          }`}
-                        >
-                          {isAuto && <Check className="w-3 h-3" />}
-                          <span>
-                            {isAuto
-                              ? `تلقائي في التكلفة (×${formatNumber(autoQty, 2)})`
-                              : 'يدوي بالبطاقة'}
+            {/* Mobile Cards */}
+            <div className="md:hidden divide-y divide-[#F0EFEA]">
+              {filteredSupplyItems.map((trim) => {
+                const unitCost = getTrimUnitCost(trim);
+                const isAuto = Boolean(trim.autoIncludeInBom);
+                const autoQty = trim.defaultQtyPerPiece ?? 1;
+                return (
+                  <div key={trim.id} className="p-3.5 space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm text-[#1A1A1E]">{trim.name}</div>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          <span className="inline-flex px-2 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-[11px] font-medium">
+                            {trim.category}
                           </span>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => openEditTrim(trim)}
-                        className="p-2 rounded-lg bg-[#FAF9F7] text-[#4B4A46] cursor-pointer"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteTrim(trim.id)}
-                        className="p-2 rounded-lg bg-red-50 text-red-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#FAF9F7] rounded-xl p-2.5">
-                    <div>
-                      <div className="text-[#6E6C66]">
-                        العبوة ({formatNumber(trim.unitsPerPack, 0)} {trim.unitLabel})
-                      </div>
-                      <div className="font-semibold tabular-nums">
-                        {formatMoney(trim.packPrice, state.currency)} / {PURCHASE_UNIT_LABELS[trim.purchaseUnit]}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[#6E6C66]">تكلفة الوحدة</div>
-                      <div className="font-bold text-[#8E6742] tabular-nums">
-                        {formatMoney(unitCost, state.currency)} / {trim.unitLabel}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            {filteredTrims.length === 0 && (
-              <div className="p-8 text-center text-xs text-[#6E6C66]">
-                لا توجد كلف أو إكسسوارات مطابقة للبحث.
-              </div>
-            )}
-          </div>
-
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm text-right">
-              <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
-                <tr>
-                  <th className="py-3.5 px-4 font-semibold">اسم الكلفة / الإكسسوار</th>
-                  <th className="py-3.5 px-4 font-semibold">التصنيف</th>
-                  <th className="py-3.5 px-4 font-semibold">المورد</th>
-                  <th className="py-3.5 px-4 font-semibold">شراء بالعبوة</th>
-                  <th className="py-3.5 px-4 font-semibold">تحويل الوحدة</th>
-                  <th className="py-3.5 px-4 font-semibold">تكلفة الوحدة الواحدة</th>
-                  <th className="py-3.5 px-4 font-semibold">الاحتساب في التكلفة (BOM)</th>
-                  <th className="py-3.5 px-4 font-semibold">إجراءات</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#F0EFEA]">
-                {filteredTrims.map((trim) => {
-                  const unitCost = getTrimUnitCost(trim);
-                  const isAuto = Boolean(trim.autoIncludeInBom);
-                  const autoQty = trim.defaultQtyPerPiece ?? 1;
-                  return (
-                    <tr key={trim.id} className="hover:bg-[#FAF9F7]/80 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-[#1A1A1E]">{trim.name}</div>
-                        {trim.notes && (
-                          <div className="text-xs text-[#6E6C66] mt-0.5 truncate max-w-xs">
-                            {trim.notes}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className="inline-flex px-2.5 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-xs font-medium">
-                          {trim.category}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-[#4B4A46]">{trim.supplier}</td>
-                      <td className="py-3.5 px-4 tabular-nums text-[#1A1A1E]">
-                        {formatMoney(trim.packPrice, state.currency)}{' '}
-                        <span className="text-xs text-[#6E6C66]">
-                          / {PURCHASE_UNIT_LABELS[trim.purchaseUnit]}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 tabular-nums text-xs text-[#6E6C66]">
-                        {formatNumber(trim.unitsPerPack, 0)} {trim.unitLabel}
-                      </td>
-                      <td className="py-3.5 px-4 tabular-nums font-bold text-[#8E6742]">
-                        {formatMoney(unitCost, state.currency)}{' '}
-                        <span className="text-xs font-normal text-[#6E6C66]">
-                          / {trim.unitLabel}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <button
-                          type="button"
-                          onClick={() => toggleTrimAutoBom(trim)}
-                          title={
-                            isAuto
-                              ? 'اضغط لتحويله إلى إضافة يدوية'
-                              : 'اضغط لتفعيل الاحتساب التلقائي في كل الموديلات'
-                          }
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
-                            isAuto
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                              : 'bg-[#F3F2EE] text-[#6E6C66] border border-[#E5E3DD] hover:bg-[#EAE8E2] hover:text-[#1A1A1E]'
-                          }`}
-                        >
-                          {isAuto && <Check className="w-3.5 h-3.5" />}
-                          <span>
-                            {isAuto
-                              ? `تلقائي (×${formatNumber(autoQty, 2)})`
-                              : 'يدوي'}
-                          </span>
-                        </button>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => openEditTrim(trim)}
-                            aria-label="تعديل الكلفة"
-                            className="p-1.5 rounded-lg text-[#4B4A46] hover:text-[#1A1A1E] hover:bg-[#F3F2EE] cursor-pointer"
+                            onClick={() => toggleTrimAutoBom(trim)}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
+                              isAuto
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-[#F3F2EE] text-[#6E6C66] border border-[#E5E3DD]'
+                            }`}
                           >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteTrim(trim.id)}
-                            aria-label="حذف الكلفة"
-                            className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
+                            {isAuto && <Check className="w-3 h-3" />}
+                            <span>
+                              {isAuto
+                                ? `تلقائي في التكلفة (×${formatNumber(autoQty, 2)})`
+                                : 'يدوي بالبطاقة'}
+                            </span>
                           </button>
                         </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openEditTrim(trim)}
+                          className="p-2 rounded-lg bg-[#FAF9F7] text-[#4B4A46] cursor-pointer"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTrim(trim.id)}
+                          className="p-2 rounded-lg bg-red-50 text-red-600 cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#FAF9F7] rounded-xl p-2.5">
+                      <div>
+                        <div className="text-[#6E6C66]">
+                          العبوة ({formatNumber(trim.unitsPerPack, 0)} {trim.unitLabel})
+                        </div>
+                        <div className="font-semibold tabular-nums">
+                          {formatMoney(trim.packPrice, state.currency)} / {PURCHASE_UNIT_LABELS[trim.purchaseUnit]}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[#6E6C66]">تكلفة الوحدة</div>
+                        <div className="font-bold text-[#8E6742] tabular-nums">
+                          {formatMoney(unitCost, state.currency)} / {trim.unitLabel}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {filteredSupplyItems.length === 0 && (
+                <div className="p-8 text-center text-xs text-[#6E6C66]">
+                  {activeTabMeta.emptyText}
+                </div>
+              )}
+            </div>
+
+            {/* Desktop Table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm text-right">
+                <thead className="bg-[#FAF9F7] text-[#6E6C66] text-xs border-b border-[#E5E3DD]">
+                  <tr>
+                    <th className="py-3.5 px-4 font-semibold">
+                      {subTab === 'manufacturing'
+                        ? 'مستلزم التصنيع'
+                        : subTab === 'brand'
+                        ? 'مستلزم البراند / التغليف'
+                        : 'اسم الكلفة / الإكسسوار'}
+                    </th>
+                    <th className="py-3.5 px-4 font-semibold">التصنيف</th>
+                    <th className="py-3.5 px-4 font-semibold">المورد</th>
+                    <th className="py-3.5 px-4 font-semibold">شراء بالعبوة</th>
+                    <th className="py-3.5 px-4 font-semibold">تحويل الوحدة</th>
+                    <th className="py-3.5 px-4 font-semibold">تكلفة الوحدة الواحدة</th>
+                    <th className="py-3.5 px-4 font-semibold">الاحتساب في التكلفة (BOM)</th>
+                    <th className="py-3.5 px-4 font-semibold">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#F0EFEA]">
+                  {filteredSupplyItems.map((trim) => {
+                    const unitCost = getTrimUnitCost(trim);
+                    const isAuto = Boolean(trim.autoIncludeInBom);
+                    const autoQty = trim.defaultQtyPerPiece ?? 1;
+                    return (
+                      <tr key={trim.id} className="hover:bg-[#FAF9F7]/80 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-[#1A1A1E]">{trim.name}</div>
+                          {trim.notes && (
+                            <div className="text-xs text-[#6E6C66] mt-0.5 truncate max-w-xs">
+                              {trim.notes}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="inline-flex px-2.5 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-xs font-medium">
+                            {trim.category}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-[#4B4A46]">{trim.supplier}</td>
+                        <td className="py-3.5 px-4 tabular-nums text-[#1A1A1E]">
+                          {formatMoney(trim.packPrice, state.currency)}{' '}
+                          <span className="text-xs text-[#6E6C66]">
+                            / {PURCHASE_UNIT_LABELS[trim.purchaseUnit]}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 tabular-nums text-xs text-[#6E6C66]">
+                          {formatNumber(trim.unitsPerPack, 0)} {trim.unitLabel}
+                        </td>
+                        <td className="py-3.5 px-4 tabular-nums font-bold text-[#8E6742]">
+                          {formatMoney(unitCost, state.currency)}{' '}
+                          <span className="text-xs font-normal text-[#6E6C66]">
+                            / {trim.unitLabel}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <button
+                            type="button"
+                            onClick={() => toggleTrimAutoBom(trim)}
+                            title={
+                              isAuto
+                                ? 'اضغط لتحويله إلى إضافة يدوية'
+                                : 'اضغط لتفعيل الاحتساب التلقائي في كل الموديلات'
+                            }
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+                              isAuto
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                : 'bg-[#F3F2EE] text-[#6E6C66] border border-[#E5E3DD] hover:bg-[#EAE8E2] hover:text-[#1A1A1E]'
+                            }`}
+                          >
+                            {isAuto && <Check className="w-3.5 h-3.5" />}
+                            <span>
+                              {isAuto
+                                ? `تلقائي (×${formatNumber(autoQty, 2)})`
+                                : 'يدوي'}
+                            </span>
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openEditTrim(trim)}
+                              aria-label="تعديل البند"
+                              className="p-1.5 rounded-lg text-[#4B4A46] hover:text-[#1A1A1E] hover:bg-[#F3F2EE] cursor-pointer"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteTrim(trim.id)}
+                              aria-label="حذف البند"
+                              className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredSupplyItems.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="py-10 text-center text-[#6E6C66]">
+                        {activeTabMeta.emptyText}
                       </td>
                     </tr>
-                  );
-                })}
-                {filteredTrims.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="py-10 text-center text-[#6E6C66]">
-                      لا توجد كلف أو إكسسوارات مطابقة للبحث.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -788,27 +1050,80 @@ export const MaterialsView: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Trim Modal with Live Unit Conversion */}
+      {/* Trim / Manufacturing Supply / Brand Supply Modal */}
       <Modal
         open={trimModalOpen}
         onClose={() => setTrimModalOpen(false)}
-        title={editingTrimId ? 'تعديل الكلفة / الإكسسوار' : 'إضافة كلفة / إكسسوار جديد'}
-        subtitle="أدخل سعر العبوة أو الدستة أو اللّفة وسيتم احتساب تكلفة القطعة الواحدة تلقائياً"
+        title={editingTrimId ? modalMeta.modalEditTitle : modalMeta.modalAddTitle}
+        subtitle="أدخل سعر العبوة أو القطعة أو الدستة أو اللّفة وسيتم احتساب تكلفة الوحدة تلقائياً"
       >
         <form onSubmit={handleTrimSubmit} className="space-y-4">
+          {/* Quick Presets */}
+          {!editingTrimId && (
+            <div>
+              <span className="block text-[11px] font-semibold text-[#6E6C66] mb-1.5">
+                اختيار سريع لبنود {modalMeta.label}:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {modalMeta.presets.map((preset) => (
+                  <button
+                    key={preset.name}
+                    type="button"
+                    onClick={() =>
+                      setTrimForm((prev) => ({
+                        ...prev,
+                        name: preset.name,
+                        category: preset.category,
+                        purchaseUnit: preset.purchaseUnit,
+                        unitsPerPack: preset.unitsPerPack,
+                        unitLabel: preset.unitLabel,
+                      }))
+                    }
+                    className="text-xs px-2.5 py-1 rounded-lg bg-[#F3F2EE] hover:bg-[#F6EFE7] hover:text-[#8E6742] text-[#1A1A1E] transition-colors cursor-pointer"
+                  >
+                    + {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
-                اسم الكلفة / الإكسسوار *
+                {modalMeta.nameLabel}
               </label>
               <input
                 type="text"
                 required
                 value={trimForm.name}
                 onChange={(e) => setTrimForm({ ...trimForm, name: e.target.value })}
-                placeholder="مثال: تيكت DressCode منسوج / سحاب مخفي / أزرار لؤلؤ"
+                placeholder={modalMeta.namePlaceholder}
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
+                القسم (التبويب)
+              </label>
+              <select
+                value={modalSupplyGroup}
+                onChange={(e) => {
+                  const nextGroup = e.target.value as TrimSupplyGroup;
+                  const nextMeta = SUPPLY_TAB_META[nextGroup];
+                  setTrimForm((prev) => ({
+                    ...prev,
+                    supplyGroup: nextGroup,
+                    category: nextMeta.defaultCategory,
+                  }));
+                }}
+                className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="trims">الكلف والإكسسوارات</option>
+                <option value="manufacturing">مستلزمات التصنيع (باترون، مقص، خيوط...)</option>
+                <option value="brand">مستلزمات البراند (شنط، تغليف، تيكت...)</option>
+              </select>
             </div>
 
             <div>
@@ -820,7 +1135,7 @@ export const MaterialsView: React.FC = () => {
                 onChange={(e) => setTrimForm({ ...trimForm, category: e.target.value })}
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm bg-white focus:outline-none focus:border-[#A67C52]"
               >
-                {getLookupLabels(state.lookups, 'trim_categories').map((cat) => (
+                {availableTrimCategories.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -914,7 +1229,20 @@ export const MaterialsView: React.FC = () => {
                 type="text"
                 value={trimForm.unitLabel}
                 onChange={(e) => setTrimForm({ ...trimForm, unitLabel: e.target.value })}
-                placeholder="مثال: زر / تيكت / سحاب / كيس"
+                placeholder="مثال: قطعة / متر / بكرة / شنطة / تيكت"
+                className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
+                ملاحظات
+              </label>
+              <input
+                type="text"
+                value={trimForm.notes || ''}
+                onChange={(e) => setTrimForm({ ...trimForm, notes: e.target.value })}
+                placeholder="ملاحظات إضافية عن المقاس أو المواصفات..."
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#A67C52]"
               />
             </div>
@@ -941,7 +1269,7 @@ export const MaterialsView: React.FC = () => {
                   <span>احتساب تلقائي في تكلفة كل الموديلات (BOM)</span>
                 </div>
                 <p className="text-[11px] text-[#6E6C66] mt-0.5">
-                  عند التفعيل، يُحتسب هذا البند تلقائياً ضمن تكلفة كل موديل (مثل الشنط والكروت وخيط التيكت) دون الحاجة لإضافته يدوياً في كل بطاقة.
+                  عند التفعيل، يُحتسب هذا البند تلقائياً ضمن تكلفة كل موديل (مثل الشنط والكروت والتيكت) دون الحاجة لإضافته يدوياً في كل بطاقة.
                 </p>
               </div>
             </label>
@@ -995,7 +1323,7 @@ export const MaterialsView: React.FC = () => {
               type="submit"
               className="px-5 py-2 rounded-xl text-sm font-semibold bg-[#1A1A1E] hover:bg-[#2E2E35] text-white cursor-pointer"
             >
-              {editingTrimId ? 'حفظ التعديلات' : 'إضافة الكلفة'}
+              {editingTrimId ? 'حفظ التعديلات' : 'حفظ البند'}
             </button>
           </div>
         </form>
