@@ -1046,6 +1046,32 @@ export const erpDb = {
     throw error;
   },
 
+  async deletePurchaseOrder(poId: string, currentStatus?: PurchaseOrder['status']) {
+    const { error } = await db().rpc('delete_purchase_order', { p_po_id: poId });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('delete_purchase_order');
+
+    if (missingFn) {
+      if (currentStatus !== 'received') {
+        const { error: delErr } = await db()
+          .from('purchase_orders')
+          .delete()
+          .eq('id', poId);
+        if (delErr) throw delErr;
+        return;
+      }
+      throw new Error(
+        'لحذف أمر شراء تم استلامه بالفعل وعكس كمياته من المخزون ورصيد المورد بأمان، يرجى تشغيل ملف التحديث 017_delete_purchase_order.sql في Supabase SQL Editor أولاً.'
+      );
+    }
+
+    throw error;
+  },
+
   async createProductionOrder(payload: {
     batchNumber: string;
     modelId: string;

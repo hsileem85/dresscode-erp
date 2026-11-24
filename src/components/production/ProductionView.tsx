@@ -15,9 +15,11 @@ import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
 import type { ModelVariant, ProductionOrder } from '../../types/erp';
 import {
+  blockNonIntegerKey,
   calculateModelCost,
   FABRIC_UNIT_LABELS,
   formatMoney,
+  toWholeQty,
 } from '../../utils/calculations';
 import {
   openAndPrintDispatchSlip,
@@ -1196,8 +1198,12 @@ export const ProductionView: React.FC = () => {
                     <input
                       type="number"
                       min="0"
+                      step="1"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       value={variantQtyMap[v.id] ?? 0}
-                      onChange={(e) => handleBatchQtyChange(v.id, Number(e.target.value))}
+                      onKeyDown={blockNonIntegerKey}
+                      onChange={(e) => handleBatchQtyChange(v.id, toWholeQty(e.target.value, 0))}
                       className="w-20 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1 text-xs text-center tabular-nums"
                     />
                   </div>
@@ -1635,8 +1641,11 @@ export const ProductionView: React.FC = () => {
                   type="number"
                   min="0"
                   step="1"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={varOpeningQty}
-                  onChange={(e) => setVarOpeningQty(Number(e.target.value))}
+                  onKeyDown={blockNonIntegerKey}
+                  onChange={(e) => setVarOpeningQty(toWholeQty(e.target.value, 0))}
                   className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-bold tabular-nums"
                 />
               </div>
@@ -1834,12 +1843,15 @@ export const ProductionView: React.FC = () => {
                     <input
                       type="number"
                       min="0"
-                      step="0.05"
+                      step="1"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       value={item.quantity}
+                      onKeyDown={blockNonIntegerKey}
                       onChange={(e) =>
                         setDispatchMaterials((prev) =>
                           prev.map((row, i) =>
-                            i === idx ? { ...row, quantity: Number(e.target.value) } : row
+                            i === idx ? { ...row, quantity: toWholeQty(e.target.value, 0) } : row
                           )
                         )
                       }

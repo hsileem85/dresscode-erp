@@ -217,3 +217,17 @@ export const OVERHEAD_CATEGORY_LABELS = {
   shipping: 'خامات شحن وتغليف',
   other: 'مصاريف إدارية أخرى',
 } as const;
+
+/** Block decimal point, comma, exponent, and sign keys on integer-only quantity inputs */
+export function blockNonIntegerKey(e: { key: string; preventDefault: () => void }): void {
+  if (e.key === '.' || e.key === ',' || e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-') {
+    e.preventDefault();
+  }
+}
+
+/** Sanitize any pasted or typed quantity into a non-negative whole integer */
+export function toWholeQty(value: string | number, min = 0): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.trunc(n));
+}

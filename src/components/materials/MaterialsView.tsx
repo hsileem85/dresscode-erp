@@ -22,11 +22,13 @@ import type {
   TrimSupplyGroup,
 } from '../../types/erp';
 import {
+  blockNonIntegerKey,
   FABRIC_UNIT_LABELS,
   formatMoney,
   formatNumber,
   getTrimUnitCost,
   PURCHASE_UNIT_LABELS,
+  toWholeQty,
 } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
@@ -1025,12 +1027,15 @@ export const MaterialsView: React.FC = () => {
               <input
                 type="number"
                 min="0"
-                step="0.1"
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={fabricForm.stockQty ?? 0}
+                onKeyDown={blockNonIntegerKey}
                 onChange={(e) =>
                   setFabricForm({
                     ...fabricForm,
-                    stockQty: Math.max(0, Number(e.target.value) || 0),
+                    stockQty: toWholeQty(e.target.value, 0),
                   })
                 }
                 className="w-full rounded-xl border border-[#E5E3DD] bg-[#FBF8F4] px-3.5 py-2.5 text-sm font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"
@@ -1231,10 +1236,16 @@ export const MaterialsView: React.FC = () => {
                 type="number"
                 min="1"
                 step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 required
-                value={trimForm.unitsPerPack}
+                value={trimForm.unitsPerPack || ''}
+                onKeyDown={blockNonIntegerKey}
                 onChange={(e) =>
-                  setTrimForm({ ...trimForm, unitsPerPack: Number(e.target.value) })
+                  setTrimForm({ ...trimForm, unitsPerPack: toWholeQty(e.target.value, 0) })
+                }
+                onBlur={() =>
+                  setTrimForm({ ...trimForm, unitsPerPack: toWholeQty(trimForm.unitsPerPack, 1) })
                 }
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm tabular-nums focus:outline-none focus:border-[#A67C52]"
               />
@@ -1260,12 +1271,15 @@ export const MaterialsView: React.FC = () => {
               <input
                 type="number"
                 min="0"
-                step="0.5"
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={trimForm.stockQty ?? 0}
+                onKeyDown={blockNonIntegerKey}
                 onChange={(e) =>
                   setTrimForm({
                     ...trimForm,
-                    stockQty: Math.max(0, Number(e.target.value) || 0),
+                    stockQty: toWholeQty(e.target.value, 0),
                   })
                 }
                 className="w-full rounded-xl border border-[#E5E3DD] bg-[#FBF8F4] px-3.5 py-2.5 text-sm font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"
@@ -1320,13 +1334,22 @@ export const MaterialsView: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    min="0.01"
-                    step="0.5"
-                    value={trimForm.defaultQtyPerPiece ?? 1}
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={trimForm.defaultQtyPerPiece || ''}
+                    onKeyDown={blockNonIntegerKey}
                     onChange={(e) =>
                       setTrimForm({
                         ...trimForm,
-                        defaultQtyPerPiece: Number(e.target.value),
+                        defaultQtyPerPiece: toWholeQty(e.target.value, 0),
+                      })
+                    }
+                    onBlur={() =>
+                      setTrimForm({
+                        ...trimForm,
+                        defaultQtyPerPiece: toWholeQty(trimForm.defaultQtyPerPiece ?? 1, 1),
                       })
                     }
                     className="w-24 rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs font-bold text-center tabular-nums focus:outline-none focus:border-[#A67C52]"

@@ -25,6 +25,7 @@ import type {
 } from '../../types/erp';
 import {
   calculateModelCost,
+  blockNonIntegerKey,
   FABRIC_UNIT_LABELS,
   formatMoney,
   formatNumber,
@@ -33,6 +34,7 @@ import {
   getLaborStepUnitCost,
   getTrimLineCost,
   getTrimUnitCost,
+  toWholeQty,
 } from '../../utils/calculations';
 
 const STATUS_LABELS: Record<ModelStatus, string> = {
@@ -855,10 +857,13 @@ export const ModelsBOMView: React.FC = () => {
                             <input
                               type="number"
                               min="0"
-                              step="0.5"
+                              step="1"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
                               value={line.quantity}
+                              onKeyDown={blockNonIntegerKey}
                               onChange={(e) =>
-                                updateTrimLine(line.id, { quantity: Number(e.target.value) })
+                                updateTrimLine(line.id, { quantity: toWholeQty(e.target.value, 0) })
                               }
                               className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
                             />
@@ -999,11 +1004,15 @@ export const ModelsBOMView: React.FC = () => {
                         <input
                           type="number"
                           min="1"
+                          step="1"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           disabled={step.billingType === 'per_piece'}
                           value={step.billingType === 'per_batch' ? step.batchSize : 1}
+                          onKeyDown={blockNonIntegerKey}
                           onChange={(e) =>
                             updateLaborLine(step.id, {
-                              batchSize: Math.max(1, Number(e.target.value)),
+                              batchSize: toWholeQty(e.target.value, 1),
                             })
                           }
                           className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs tabular-nums disabled:bg-[#F0EFEA] disabled:text-[#9C9990]"

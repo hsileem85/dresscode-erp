@@ -19,12 +19,14 @@ import { useERP } from '../../context/ERPContext';
 import { newUuid } from '../../lib/supabase';
 import type { OverheadItem } from '../../types/erp';
 import {
+  blockNonIntegerKey,
   calculateModelCost,
   formatMoney,
   formatNumber,
   getOverheadPerPiece,
   getTotalMonthlyOverhead,
   OVERHEAD_CATEGORY_LABELS,
+  toWholeQty,
 } from '../../utils/calculations';
 
 const CHART_COLORS = ['#1A1A1E', '#A67C52', '#8E8B82', '#D4B896', '#3D6B59'];
@@ -263,8 +265,12 @@ export const CostCalculatorView: React.FC = () => {
                 id="monthly-volume-input"
                 type="number"
                 min="1"
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={state.overhead.estimatedMonthlyVolume}
-                onChange={(e) => setMonthlyVolume(Number(e.target.value) || 1)}
+                onKeyDown={blockNonIntegerKey}
+                onChange={(e) => setMonthlyVolume(toWholeQty(e.target.value, 1))}
                 className="w-24 sm:w-28 rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-sm font-bold text-center tabular-nums focus:outline-none focus:border-[#A67C52]"
               />
             </div>

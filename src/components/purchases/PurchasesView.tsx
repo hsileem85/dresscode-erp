@@ -3,10 +3,12 @@ import { CheckCircle2, PackagePlus, Plus, ShoppingBag, Trash2, Truck, XCircle } 
 import { useERP } from '../../context/ERPContext';
 import { CURRENCIES } from '../../types/erp';
 import {
+  blockNonIntegerKey,
   FABRIC_UNIT_LABELS,
   formatMoney,
   formatNumber,
   PURCHASE_UNIT_LABELS,
+  toWholeQty,
 } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
@@ -18,7 +20,7 @@ interface DraftLine {
 }
 
 export const PurchasesView: React.FC = () => {
-  const { state, createAndReceivePO, receivePO, cancelPO } = useERP();
+  const { state, createAndReceivePO, receivePO, cancelPO, deletePO } = useERP();
   const [modalOpen, setModalOpen] = useState(false);
   const [supplierName, setSupplierName] = useState('');
   const [supplierId, setSupplierId] = useState<string>('');
@@ -187,6 +189,7 @@ export const PurchasesView: React.FC = () => {
         state.purchaseOrders.length + 1
       ).padStart(3, '0')}`;
       const items = lines.map((line, idx) => {
+        const wholeQty = toWholeQty(line.quantity, 1);
         const shippingAllocated = poCalc.allocations[idx]?.shippingAllocated || 0;
         if (line.itemType === 'fabric') {
           const fab = state.fabrics.find((f) => f.id === line.refId);
@@ -195,7 +198,7 @@ export const PurchasesView: React.FC = () => {
             fabricId: line.refId,
             trimId: null,
             description: fab?.name || 'قماش',
-            quantity: line.quantity,
+            quantity: wholeQty,
             unitsPerPack: 1,
             unitPrice: line.unitPrice,
             shippingAllocated,
@@ -207,7 +210,7 @@ export const PurchasesView: React.FC = () => {
           fabricId: null,
           trimId: line.refId,
           description: trim?.name || 'كلفة',
-          quantity: line.quantity,
+          quantity: wholeQty,
           unitsPerPack: trim?.unitsPerPack || 1,
           unitPrice: line.unitPrice,
           shippingAllocated,
@@ -378,30 +381,39 @@ export const PurchasesView: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  {!isCancelled && (
-                    <div className="flex items-center gap-1.5">
-                      {!isReceived && (
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
-                          className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
-                          استلام بالمخزن
-                        </button>
-                      )}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {!isCancelled && !isReceived && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
+                        className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
+                        استلام بالمخزن
+                      </button>
+                    )}
+                    {!isCancelled && (
                       <button
                         type="button"
                         disabled={isBusy}
                         onClick={() => void runPoAction(po.id, () => cancelPO(po.id))}
-                        className="inline-flex items-center gap-1 text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                        className="inline-flex items-center gap-1 text-xs font-bold border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
                       >
                         <XCircle className="w-3.5 h-3.5" />
-                        إلغاء الأمر
+                        إلغاء
                       </button>
-                    </div>
-                  )}
+                    )}
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => void runPoAction(po.id, () => deletePO(po.id))}
+                      className="inline-flex items-center gap-1 text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      حذف
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -486,32 +498,40 @@ export const PurchasesView: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      {!isCancelled ? (
-                        <div className="flex items-center gap-1.5">
-                          {!isReceived && (
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
-                              className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg hover:bg-[#2E2E35] cursor-pointer disabled:opacity-50"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
-                              استلام بالمخزن
-                            </button>
-                          )}
+                      <div className="flex items-center gap-1.5">
+                        {!isCancelled && !isReceived && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
+                            className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg hover:bg-[#2E2E35] cursor-pointer disabled:opacity-50"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
+                            استلام بالمخزن
+                          </button>
+                        )}
+                        {!isCancelled && (
                           <button
                             type="button"
                             disabled={isBusy}
                             onClick={() => void runPoAction(po.id, () => cancelPO(po.id))}
-                            className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                            className="inline-flex items-center gap-1 text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                           >
                             <XCircle className="w-3.5 h-3.5" />
                             إلغاء
                           </button>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-[#9C9990]">—</span>
-                      )}
+                        )}
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void runPoAction(po.id, () => deletePO(po.id))}
+                          title="حذف أمر الشراء نهائياً"
+                          className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          حذف
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -657,17 +677,27 @@ export const PurchasesView: React.FC = () => {
                       <div className="relative flex items-center">
                         <input
                           type="number"
-                          min="0.01"
-                          step="0.5"
-                          value={line.quantity}
+                          min="1"
+                          step="1"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={line.quantity || ''}
+                          onKeyDown={blockNonIntegerKey}
                           onChange={(e) =>
                             setLines((prev) =>
                               prev.map((l, i) =>
-                                i === idx ? { ...l, quantity: Number(e.target.value) } : l
+                                i === idx ? { ...l, quantity: toWholeQty(e.target.value, 0) } : l
                               )
                             )
                           }
-                          placeholder="أدخل الكمية"
+                          onBlur={() =>
+                            setLines((prev) =>
+                              prev.map((l, i) =>
+                                i === idx ? { ...l, quantity: toWholeQty(l.quantity, 1) } : l
+                              )
+                            )
+                          }
+                          placeholder="عدد صحيح"
                           aria-label={`الكمية (${unitLabel})`}
                           className="w-full rounded-lg border border-[#E5E3DD] bg-white pr-2.5 pl-12 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums focus:outline-none focus:border-[#1A1A1E]"
                         />

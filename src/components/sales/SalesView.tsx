@@ -11,7 +11,12 @@ import {
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
 import type { SalesChannel, SalesOrder } from '../../types/erp';
-import { formatMoney, formatNumber } from '../../utils/calculations';
+import {
+  blockNonIntegerKey,
+  formatMoney,
+  formatNumber,
+  toWholeQty,
+} from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
 const FULFILLMENT_STATES = ['قيد التجهيز', 'واصل', 'مكتمل', 'مرتجع'];
@@ -110,7 +115,7 @@ export const SalesView: React.FC = () => {
       paidAmount: Number(paidAmount) || 0,
       fulfillmentStatus,
       confirmImmediately,
-      items,
+      items: items.map((it) => ({ ...it, quantity: toWholeQty(it.quantity, 1) })),
     });
     setModalOpen(false);
   };
@@ -715,14 +720,27 @@ export const SalesView: React.FC = () => {
                 <input
                   type="number"
                   min="1"
-                  value={it.quantity}
+                  step="1"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={it.quantity || ''}
+                  onKeyDown={blockNonIntegerKey}
                   onChange={(e) =>
                     setItems((prev) =>
                       prev.map((row, i) =>
-                        i === idx ? { ...row, quantity: Number(e.target.value) } : row
+                        i === idx ? { ...row, quantity: toWholeQty(e.target.value, 0) } : row
                       )
                     )
                   }
+                  onBlur={() =>
+                    setItems((prev) =>
+                      prev.map((row, i) =>
+                        i === idx ? { ...row, quantity: toWholeQty(row.quantity, 1) } : row
+                      )
+                    )
+                  }
+                  placeholder="الكمية"
+                  aria-label="الكمية"
                   className="sm:col-span-2 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs tabular-nums"
                 />
                 <input

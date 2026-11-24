@@ -20,9 +20,11 @@ import type {
   OutsourcedOperation,
 } from '../../types/erp';
 import {
+  blockNonIntegerKey,
   formatMoney,
   getLaborStepUnitCost,
   getTrimUnitCost,
+  toWholeQty,
 } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
 
@@ -780,10 +782,17 @@ export const OutsourcedLaborView: React.FC = () => {
                 <input
                   type="number"
                   min="1"
+                  step="1"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   required
-                  value={form.batchSize}
+                  value={form.batchSize || ''}
+                  onKeyDown={blockNonIntegerKey}
                   onChange={(e) =>
-                    setForm({ ...form, batchSize: Number(e.target.value) })
+                    setForm({ ...form, batchSize: toWholeQty(e.target.value, 0) })
+                  }
+                  onBlur={() =>
+                    setForm({ ...form, batchSize: toWholeQty(form.batchSize, 1) })
                   }
                   className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm tabular-nums focus:outline-none focus:border-[#A67C52]"
                 />
@@ -797,9 +806,16 @@ export const OutsourcedLaborView: React.FC = () => {
               <input
                 type="number"
                 min="1"
-                value={form.leadTimeDays}
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={form.leadTimeDays || ''}
+                onKeyDown={blockNonIntegerKey}
                 onChange={(e) =>
-                  setForm({ ...form, leadTimeDays: Number(e.target.value) })
+                  setForm({ ...form, leadTimeDays: toWholeQty(e.target.value, 0) })
+                }
+                onBlur={() =>
+                  setForm({ ...form, leadTimeDays: toWholeQty(form.leadTimeDays, 1) })
                 }
                 className="w-full rounded-xl border border-[#E5E3DD] px-3.5 py-2.5 text-sm tabular-nums focus:outline-none focus:border-[#A67C52]"
               />
@@ -896,11 +912,14 @@ export const OutsourcedLaborView: React.FC = () => {
                       <input
                         type="number"
                         min="0"
-                        step="0.05"
+                        step="1"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         value={mat.quantity}
+                        onKeyDown={blockNonIntegerKey}
                         onChange={(e) =>
                           updateMaterialRow(mat.id, {
-                            quantity: Math.max(0, Number(e.target.value) || 0),
+                            quantity: toWholeQty(e.target.value, 0),
                           })
                         }
                         placeholder="الكمية"

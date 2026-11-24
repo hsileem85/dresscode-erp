@@ -130,6 +130,7 @@ interface ERPContextValue {
   }) => Promise<void>;
   receivePO: (poId: string) => Promise<void>;
   cancelPO: (poId: string) => Promise<void>;
+  deletePO: (poId: string) => Promise<void>;
 
   createProductionBatch: (payload: {
     batchNumber: string;
@@ -1187,6 +1188,98 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const deletePO = async (poId: string) => {
+    const po = state.purchaseOrders.find((p) => p.id === poId);
+    if (!po) return;
+
+    const isReceived = po.status === 'received';
+    const ok = await confirmAction({
+      title: 'تأكيد حذف أمر الشراء نهائياً',
+      message: `هل أنت متأكد من حذف أمر الشراء «${po.poNumber}» (${
+        po.supplierName
+      }) بقيمة ${formatMoney(po.totalAmount, state.currency)} نهائياً؟`,
+      detail: isReceived
+        ? 'هذا الأمر تم استلامه بالفعل بالمخزن — سيتم خصم الكميات المستلمة من مخزون الخامات وعكس رصيد المورد تلقائياً ثم حذف الأمر نهائياً. لن يُسمح بالحذف إذا تم استهلاك جزء من الخامات.'
+        : 'سيتم حذف أمر الشراء وبنوده نهائياً من السجل ولا يمكن التراجع عن هذه العملية.',
+      confirmLabel: 'نعم، حذف أمر الشراء نهائياً',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    if (cloudConnected) {
+      await runCloud(() => erpDb.deletePurchaseOrder(poId, po.status));
+      return;
+    }
+
+    if (po.status === 'received') {
+      for (const item of po.items) {
+        if (item.itemType === 'fabric' && item.fabricId) {
+          const fab = state.fabrics.find((f) => f.id === item.fabricId);
+          if (fab && fab.stockQty < item.quantity) {
+            setSyncError(
+              `لا يمكن حذف أمر الشراء لأن جزءاً من القماش (${fab.name}) تم استخدامه بالفعل — الرصيد المتاح ${fab.stockQty} أقل من كمية الأمر ${item.quantity}.`
+            );
+            return;
+          }
+        } else if (item.itemType === 'trim' && item.trimId) {
+          const trim = state.trims.find((t) => t.id === item.trimId);
+          const needed = item.quantity * Math.max(item.unitsPerPack || 1, 1);
+          if (trim && trim.stockQty < needed) {
+            setSyncError(
+              `لا يمكن حذف أمر الشراء لأن جزءاً من الكلفة (${trim.name}) تم استخدامه بالفعل — الرصيد المتاح ${trim.stockQty} أقل من كمية الأمر ${needed}.`
+            );
+            return;
+          }
+        }
+      }
+    }
+
+    setState((prev) => {
+      const target = prev.purchaseOrders.find((p) => p.id === poId);
+      if (!target) return prev;
+
+      let nextFabrics = prev.fabrics;
+      let nextTrims = prev.trims;
+      let nextSuppliers = prev.suppliers;
+
+      if (target.status === 'received') {
+        for (const item of target.items) {
+          if (item.itemType === 'fabric' && item.fabricId) {
+            nextFabrics = nextFabrics.map((f) =>
+              f.id === item.fabricId
+                ? { ...f, stockQty: Math.max(0, f.stockQty - item.quantity) }
+                : f
+            );
+          } else if (item.itemType === 'trim' && item.trimId) {
+            nextTrims = nextTrims.map((t) =>
+              t.id === item.trimId
+                ? {
+                    ...t,
+                    stockQty: Math.max(0, t.stockQty - item.quantity * item.unitsPerPack),
+                  }
+                : t
+            );
+          }
+        }
+        if (target.supplierId) {
+          nextSuppliers = nextSuppliers.map((s) =>
+            s.id === target.supplierId
+              ? { ...s, balancePayable: Math.max(0, s.balancePayable - target.totalAmount) }
+              : s
+          );
+        }
+      }
+
+      return {
+        ...prev,
+        fabrics: nextFabrics,
+        trims: nextTrims,
+        suppliers: nextSuppliers,
+        purchaseOrders: prev.purchaseOrders.filter((p) => p.id !== poId),
+      };
+    });
+  };
+
   // Production
   const createProductionBatch: ERPContextValue['createProductionBatch'] = async (payload) => {
     if (cloudConnected) {
@@ -2036,6 +2129,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createAndReceivePO,
         receivePO,
         cancelPO,
+        deletePO,
         createProductionBatch,
         issueProductionBatch,
         completeProductionBatch,
