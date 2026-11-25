@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Calculator,
   Copy,
+  Factory,
   Hammer,
   Layers,
   PackageOpen,
@@ -64,12 +65,14 @@ function createBlankModel(existingCount: number): ProductModel {
 export const ModelsBOMView: React.FC = () => {
   const {
     state,
+    userRole,
     selectedModelId,
     setSelectedModelId,
     saveModel,
     deleteModel,
     duplicateModel,
     openModelInCalculator,
+    openProductionForModel,
   } = useERP();
   const confirmAction = useConfirm();
 
@@ -412,14 +415,16 @@ export const ModelsBOMView: React.FC = () => {
                     <Copy className="w-3.5 h-3.5" />
                     <span>نسخ</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteModel(draft.id)}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                    title="حذف الموديل"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {userRole === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => deleteModel(draft.id)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                      title="حذف الموديل"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     id="btn-save-model"
                     type="button"
@@ -1093,7 +1098,7 @@ export const ModelsBOMView: React.FC = () => {
                 الموديل: <span className="font-bold text-[#1A1A1E]">{draft.name || 'موديل جديد'}</span>
                 {draft.sku && <span className="font-mono mr-1.5">({draft.sku})</span>}
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
                 <button
                   type="button"
                   onClick={() => openModelInCalculator(draft.id)}
@@ -1101,6 +1106,17 @@ export const ModelsBOMView: React.FC = () => {
                 >
                   <Calculator className="w-3.5 h-3.5 text-[#A67C52]" />
                   <span>حاسبة التسعير</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    saveModel(draft);
+                    openProductionForModel(draft.id);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2.5 rounded-xl bg-[#F6EFE7] hover:bg-[#EDE0D1] text-[#8E6742] border border-[#E6D5C3] cursor-pointer transition-colors"
+                >
+                  <Factory className="w-3.5 h-3.5" />
+                  <span>إصدار أمر تصنيع لهذا الموديل ←</span>
                 </button>
                 <button
                   id="btn-save-model-bottom"

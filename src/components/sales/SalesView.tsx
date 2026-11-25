@@ -1,15 +1,19 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Banknote,
   CheckCircle2,
+  MessageCircle,
   Plus,
   Receipt,
+  RefreshCw,
   Trash2,
   TrendingUp,
   XCircle,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
+import { newUuid } from '../../lib/supabase';
 import type { SalesChannel, SalesOrder } from '../../types/erp';
 import {
   blockNonIntegerKey,
@@ -24,10 +28,13 @@ const FULFILLMENT_STATES = ['قيد التجهيز', 'واصل', 'مكتمل', '
 export const SalesView: React.FC = () => {
   const {
     state,
+    userRole,
+    saveCustomer,
     createSalesOrder,
     confirmSalesOrder,
     recordSalesPayment,
     updateSalesFulfillment,
+    processSalesExchangeReturn,
     cancelSalesOrder,
     deleteSalesOrder,
   } = useERP();
@@ -35,6 +42,7 @@ export const SalesView: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [busySaleId, setBusySaleId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [platform, setPlatform] = useState('واتساب');
   const [discountAmount, setDiscountAmount] = useState(0);
@@ -50,6 +58,16 @@ export const SalesView: React.FC = () => {
   const [paymentOrder, setPaymentOrder] = useState<SalesOrder | null>(null);
   const [paymentValue, setPaymentValue] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState('تحويل');
+
+  // Exchange / Partial Return modal
+  const [exchangeOrder, setExchangeOrder] = useState<SalesOrder | null>(null);
+  const [exchangeMode, setExchangeMode] = useState<'exchange' | 'return'>('exchange');
+  const [returnVariantId, setReturnVariantId] = useState('');
+  const [returnQty, setReturnQty] = useState(1);
+  const [replacementVariantId, setReplacementVariantId] = useState('');
+  const [priceDiff, setPriceDiff] = useState(0);
+  const [exchangeNotes, setExchangeNotes] = useState('');
+  const [exchanging, setExchanging] = useState(false);
 
   const runSaleAction = async (saleId: string, fn: () => Promise<void>) => {
     setBusySaleId(saleId);
@@ -72,6 +90,114 @@ export const SalesView: React.FC = () => {
     [state.models]
   );
 
+  const hasDuplicateVariants = useMemo(() => {
+    const seen = new Set<string>();
+    for (const it of items) {
+      if (seen.has(it.variantId)) return true;
+      seen.add(it.variantId);
+    }
+    return false;
+  }, [items]);
+
+  const mergeDuplicateVariants = () => {
+    const merged: { variantId: string; quantity: number; unitPrice: number }[] = [];
+    const idxByVar = new Map<string, number>();
+    for (const it of items) {
+      const idx = idxByVar.get(it.variantId);
+      if (idx !== undefined) {
+        merged[idx] = {
+          ...merged[idx],
+          quantity: toWholeQty(merged[idx].quantity, 0) + toWholeQty(it.quantity, 0),
+        };
+      } else {
+        idxByVar.set(it.variantId, merged.length);
+        merged.push({ ...it, quantity: toWholeQty(it.quantity, 1) });
+      }
+    }
+    setItems(merged);
+  };
+
+  const handlePhoneLookup = (phoneVal: string) => {
+    setCustomerPhone(phoneVal);
+    const digits = phoneVal.replace(/[^\d]/g, '');
+    if (digits.length >= 7) {
+      const match = state.customers.find(
+        (c) => (c.phone || '').replace(/[^\d]/g, '') === digits
+      );
+      if (match) {
+        setCustomerId(match.id);
+        setCustomerName(match.name);
+        if (match.platform) setPlatform(match.platform);
+      }
+    }
+  };
+
+  const handleOpenWhatsApp = (so: SalesOrder) => {
+    const customer = state.customers.find(
+      (c) => (so.customerId && c.id === so.customerId) || c.name === so.customerName
+    );
+    const itemsSummary = so.items
+      .map((it) => {
+        const v = allVariants.find((x) => x.id === it.variantId);
+        return v ? `${v.modelName} (${v.color}/${v.size}) × ${it.quantity}` : `${it.quantity} قطعة`;
+      })
+      .join(' + ');
+    const lines = [
+      `مرحباً أ/ ${so.customerName} 🌿`,
+      `تأكيد طلبك من *DressCode*:`,
+      `• رقم الطلب: ${so.orderNumber}`,
+      `• الأصناف: ${itemsSummary}`,
+      `• الإجمالي: ${formatMoney(so.totalAmount, state.currency)}`,
+      so.paidAmount > 0 ? `• المدفوع: ${formatMoney(so.paidAmount, state.currency)}` : '',
+      so.remainingDebt > 0.01
+        ? `• المتبقي عند الاستلام: ${formatMoney(so.remainingDebt, state.currency)}`
+        : `• حالة الدفع: مدفوع بالكامل ✓`,
+      `شكراً لاختيارك DressCode 🤍`,
+    ].filter(Boolean);
+
+    const rawPhone = (customer?.phone || '').replace(/[^\d]/g, '');
+    const normalized = rawPhone.startsWith('01') && rawPhone.length === 11 ? `2${rawPhone}` : rawPhone;
+    const url = normalized
+      ? `https://wa.me/${normalized}?text=${encodeURIComponent(lines.join('\n'))}`
+      : `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const openExchangeModal = (so: SalesOrder) => {
+    const firstLine = so.items[0];
+    if (!firstLine) return;
+    setExchangeOrder(so);
+    setExchangeMode('exchange');
+    setReturnVariantId(firstLine.variantId);
+    setReturnQty(1);
+    const otherVar =
+      allVariants.find((v) => v.id !== firstLine.variantId && v.finishedGoodsQty > 0) ||
+      allVariants[0];
+    setReplacementVariantId(otherVar?.id || '');
+    setPriceDiff(0);
+    setExchangeNotes('');
+  };
+
+  const handleExchangeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!exchangeOrder || !returnVariantId || exchanging) return;
+    setExchanging(true);
+    try {
+      await processSalesExchangeReturn({
+        saleId: exchangeOrder.id,
+        returnVariantId,
+        returnQty: toWholeQty(returnQty, 1),
+        replacementVariantId: exchangeMode === 'exchange' ? replacementVariantId || null : null,
+        replacementQty: exchangeMode === 'exchange' ? toWholeQty(returnQty, 1) : 0,
+        priceDiff: exchangeMode === 'exchange' ? Number(priceDiff) || 0 : 0,
+        notes: exchangeNotes,
+      });
+      setExchangeOrder(null);
+    } finally {
+      setExchanging(false);
+    }
+  };
+
   const draftTotal = useMemo(() => {
     const sub = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
     return Math.max(0, sub - discountAmount + shippingFee);
@@ -80,6 +206,7 @@ export const SalesView: React.FC = () => {
   const openModal = () => {
     const first = allVariants.find((v) => v.finishedGoodsQty > 0) || allVariants[0];
     setCustomerId('');
+    setCustomerPhone('');
     setCustomerName('');
     setPlatform('واتساب');
     setDiscountAmount(0);
@@ -97,6 +224,31 @@ export const SalesView: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim() || items.length === 0) return;
+
+    // Auto-create customer if phone/name provided and not linked yet
+    let resolvedCustomerId: string | null = customerId || null;
+    if (!resolvedCustomerId && customerPhone.trim()) {
+      const digits = customerPhone.replace(/[^\d]/g, '');
+      const existingByPhone = state.customers.find(
+        (c) => (c.phone || '').replace(/[^\d]/g, '') === digits
+      );
+      if (existingByPhone) {
+        resolvedCustomerId = existingByPhone.id;
+      } else {
+        const newCustId = newUuid();
+        saveCustomer({
+          id: newCustId,
+          name: customerName.trim(),
+          phone: customerPhone.trim(),
+          platform,
+          governorate: '',
+          customerType: 'جديد',
+          notes: 'أُضيف تلقائياً من شاشة الطلبات',
+        });
+        resolvedCustomerId = newCustId;
+      }
+    }
+
     const orderNumber = `DC-ORD-${String(state.salesOrders.length + 1).padStart(3, '0')}`;
     const channel: SalesChannel =
       platform === 'المتجر'
@@ -104,15 +256,16 @@ export const SalesView: React.FC = () => {
         : platform === 'مباشر'
         ? 'retail'
         : 'social_media';
+    const safePaid = Math.min(draftTotal, Math.max(0, Number(paidAmount) || 0));
     await createSalesOrder({
       orderNumber,
-      customerId: customerId || null,
+      customerId: resolvedCustomerId,
       customerName: customerName.trim(),
       channel,
       platform,
       discountAmount: Number(discountAmount) || 0,
       shippingFee: Number(shippingFee) || 0,
-      paidAmount: Number(paidAmount) || 0,
+      paidAmount: safePaid,
       fulfillmentStatus,
       confirmImmediately,
       items: items.map((it) => ({ ...it, quantity: toWholeQty(it.quantity, 1) })),
@@ -123,6 +276,7 @@ export const SalesView: React.FC = () => {
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paymentOrder || paymentValue <= 0) return;
+    if (paymentValue > paymentOrder.remainingDebt + 0.01) return;
     await recordSalesPayment(paymentOrder.id, paymentValue, paymentMethod);
     setPaymentOrder(null);
   };
@@ -339,16 +493,39 @@ export const SalesView: React.FC = () => {
                         إلغاء
                       </button>
                     )}
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void runSaleAction(so.id, () => deleteSalesOrder(so.id))}
-                      aria-label="حذف الطلب"
-                      className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      حذف
-                    </button>
+                    {!isCancelled && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenWhatsApp(so)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        واتساب
+                      </button>
+                    )}
+                    {!isCancelled && so.status !== 'draft' && so.items.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => openExchangeModal(so)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        استبدال/مرتجع
+                      </button>
+                    )}
+                    {userRole === 'admin' && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runSaleAction(so.id, () => deleteSalesOrder(so.id))}
+                        aria-label="حذف الطلب"
+                        className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        حذف
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -502,16 +679,41 @@ export const SalesView: React.FC = () => {
                             إلغاء
                           </button>
                         )}
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => void runSaleAction(so.id, () => deleteSalesOrder(so.id))}
-                          title="حذف الطلب نهائياً"
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          حذف
-                        </button>
+                        {!isCancelled && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenWhatsApp(so)}
+                            title="إرسال رسالة تأكيد الطلب عبر واتساب"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <MessageCircle className="w-3 h-3" />
+                            واتساب
+                          </button>
+                        )}
+                        {!isCancelled && so.status !== 'draft' && so.items.length > 0 && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => openExchangeModal(so)}
+                            title="استبدال مقاس/لون أو مرتجع جزئي"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 px-2 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            استبدال
+                          </button>
+                        )}
+                        {userRole === 'admin' && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runSaleAction(so.id, () => deleteSalesOrder(so.id))}
+                            title="حذف الطلب نهائياً"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            حذف
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -615,7 +817,7 @@ export const SalesView: React.FC = () => {
         maxWidthClass="max-w-2xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1">اختر من العملاء</label>
               <select
@@ -625,6 +827,7 @@ export const SalesView: React.FC = () => {
                   const found = state.customers.find((c) => c.id === e.target.value);
                   if (found) {
                     setCustomerName(found.name);
+                    setCustomerPhone(found.phone || '');
                     setPlatform(found.platform || 'واتساب');
                   }
                 }}
@@ -637,6 +840,18 @@ export const SalesView: React.FC = () => {
                   </option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">
+                رقم الموبايل (بحث / تسجيل تلقائي)
+              </label>
+              <input
+                type="tel"
+                value={customerPhone}
+                onChange={(e) => handlePhoneLookup(e.target.value)}
+                placeholder="01xxxxxxxxx"
+                className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs tabular-nums"
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold mb-1">اسم العميل *</label>
@@ -687,6 +902,22 @@ export const SalesView: React.FC = () => {
                 + إضافة منتج
               </button>
             </div>
+
+            {hasDuplicateVariants && (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                  <span>تنبيه: يوجد نفس الصنف (اللون/المقاس) مكرر داخل الطلب!</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={mergeDuplicateVariants}
+                  className="px-2.5 py-1 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[11px] font-bold cursor-pointer"
+                >
+                  دمج الأصناف المكررة
+                </button>
+              </div>
+            )}
 
             {items.map((it, idx) => (
               <div
@@ -855,43 +1086,216 @@ export const SalesView: React.FC = () => {
         )}`}
       >
         <form onSubmit={handleRecordPayment} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold mb-1">قيمة الدفعة *</label>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                required
-                value={paymentValue}
-                onChange={(e) => setPaymentValue(Number(e.target.value))}
-                className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm font-bold tabular-nums"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">طريقة التحصيل</label>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
-              >
-                {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl bg-[#A67C52] text-white text-xs font-bold cursor-pointer"
-            >
-              تأكيد التحصيل
-            </button>
-          </div>
+          {(() => {
+            const rem = Math.max(0, paymentOrder?.remainingDebt || 0);
+            const isOver = paymentValue > rem + 0.01;
+            return (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">قيمة الدفعة *</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      max={rem}
+                      step="0.01"
+                      required
+                      value={paymentValue}
+                      onChange={(e) => setPaymentValue(Number(e.target.value))}
+                      className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm font-bold tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">طريقة التحصيل</label>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                      className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
+                    >
+                      {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {isOver && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] font-bold text-red-700">
+                    لا يمكن تحصيل مبلغ أكبر من المتبقي على الطلب ({formatMoney(rem, state.currency)}).
+                  </div>
+                )}
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+                  <button
+                    type="submit"
+                    disabled={paymentValue <= 0 || isOver}
+                    className="px-5 py-2 rounded-xl bg-[#A67C52] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    تأكيد التحصيل
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </form>
+      </Modal>
+
+      {/* Size Exchange / Partial Return Modal */}
+      <Modal
+        open={Boolean(exchangeOrder)}
+        onClose={() => setExchangeOrder(null)}
+        title={`استبدال مقاس / مرتجع جزئي — ${exchangeOrder?.orderNumber || ''}`}
+        subtitle={`العميل: ${exchangeOrder?.customerName || ''} • يتم ضبط المخزون والحساب تلقائياً`}
+        maxWidthClass="max-w-lg"
+      >
+        {exchangeOrder && (
+          <form onSubmit={handleExchangeSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#F3F2EE] p-1">
+              <button
+                type="button"
+                onClick={() => setExchangeMode('exchange')}
+                className={`py-2 rounded-lg text-xs font-bold cursor-pointer ${
+                  exchangeMode === 'exchange' ? 'bg-[#1A1A1E] text-white' : 'text-[#6E6C66]'
+                }`}
+              >
+                استبدال مقاس / لون
+              </button>
+              <button
+                type="button"
+                onClick={() => setExchangeMode('return')}
+                className={`py-2 rounded-lg text-xs font-bold cursor-pointer ${
+                  exchangeMode === 'return' ? 'bg-[#1A1A1E] text-white' : 'text-[#6E6C66]'
+                }`}
+              >
+                مرتجع جزئي بدون بديل
+              </button>
+            </div>
+
+            {(() => {
+              const selectedLine = exchangeOrder.items.find(
+                (it) => it.variantId === returnVariantId
+              );
+              const maxRetQty = selectedLine?.quantity || 1;
+              return (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-8">
+                      <label className="block text-xs font-semibold mb-1">
+                        الصنف المرتجع من العميل *
+                      </label>
+                      <select
+                        value={returnVariantId}
+                        onChange={(e) => {
+                          setReturnVariantId(e.target.value);
+                          setReturnQty(1);
+                        }}
+                        className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-semibold"
+                      >
+                        {exchangeOrder.items.map((it) => {
+                          const v = allVariants.find((x) => x.id === it.variantId);
+                          return (
+                            <option key={it.id} value={it.variantId}>
+                              {v ? `${v.modelName} (${v.color} - ${v.size})` : it.variantId} — كمية{' '}
+                              {it.quantity}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-4">
+                      <label className="block text-xs font-semibold mb-1">
+                        الكمية المرتجعة (حد أقصى {maxRetQty})
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max={maxRetQty}
+                        step="1"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={returnQty || ''}
+                        onKeyDown={blockNonIntegerKey}
+                        onChange={(e) =>
+                          setReturnQty(Math.min(maxRetQty, toWholeQty(e.target.value, 0)))
+                        }
+                        onBlur={() =>
+                          setReturnQty(Math.min(maxRetQty, toWholeQty(returnQty, 1)))
+                        }
+                        className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs font-bold text-center tabular-nums"
+                      />
+                    </div>
+                  </div>
+
+                  {exchangeMode === 'exchange' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 rounded-xl bg-sky-50/60 border border-sky-200 p-3">
+                      <div className="sm:col-span-8">
+                        <label className="block text-xs font-bold text-sky-900 mb-1">
+                          الصنف البديل الجديد (المقاس / اللون) *
+                        </label>
+                        <select
+                          value={replacementVariantId}
+                          onChange={(e) => setReplacementVariantId(e.target.value)}
+                          required
+                          className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold"
+                        >
+                          {allVariants.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.modelName} ({v.color} - {v.size}) [متاح: {v.finishedGoodsQty}]
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="sm:col-span-4">
+                        <label className="block text-xs font-bold text-sky-900 mb-1">
+                          فرق السعر (إن وجد)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={priceDiff}
+                          onChange={(e) => setPriceDiff(Number(e.target.value) || 0)}
+                          className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-bold tabular-nums"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">سبب الاستبدال / المرتجع</label>
+                    <input
+                      type="text"
+                      value={exchangeNotes}
+                      onChange={(e) => setExchangeNotes(e.target.value)}
+                      placeholder="مثال: تبديل من M إلى L بناءً على طلب العميل"
+                      className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+                    <button
+                      type="button"
+                      onClick={() => setExchangeOrder(null)}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+                    >
+                      إلغاء
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={exchanging || returnQty <= 0}
+                      className="px-5 py-2 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {exchanging
+                        ? 'جاري التنفيذ...'
+                        : exchangeMode === 'exchange'
+                          ? 'تأكيد الاستبدال وتحديث المخزون'
+                          : 'تأكيد المرتجع وإعادة القطع للمخزون'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </form>
+        )}
       </Modal>
     </div>
   );

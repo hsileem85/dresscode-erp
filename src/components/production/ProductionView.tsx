@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Banknote,
   Boxes,
   CheckCircle2,
@@ -30,6 +31,9 @@ import { Modal } from '../common/Modal';
 export const ProductionView: React.FC = () => {
   const {
     state,
+    userRole,
+    pendingProductionModelId,
+    clearPendingProductionModel,
     addModelVariant,
     updateModelVariant,
     deleteModelVariant,
@@ -41,12 +45,24 @@ export const ProductionView: React.FC = () => {
     deleteProductionBatch,
   } = useERP();
 
-  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const initialModelId =
+    pendingProductionModelId && state.models.some((m) => m.id === pendingProductionModelId)
+      ? pendingProductionModelId
+      : state.models[0]?.id || '';
+  const initialModel = state.models.find((m) => m.id === initialModelId);
+  const initialWorkshopId =
+    initialModel?.laborSteps.find((l) => l.workshopId)?.workshopId ||
+    state.workshops[0]?.id ||
+    '';
+
+  const [batchModalOpen, setBatchModalOpen] = useState<boolean>(() =>
+    Boolean(pendingProductionModelId)
+  );
   const [editingBatch, setEditingBatch] = useState<ProductionOrder | null>(null);
   const [variantModalOpen, setVariantModalOpen] = useState(false);
-  const [selectedModelId, setSelectedModelId] = useState<string>(state.models[0]?.id || '');
+  const [selectedModelId, setSelectedModelId] = useState<string>(() => initialModelId);
   const [variantQtyMap, setVariantQtyMap] = useState<Record<string, number>>({});
-  const [batchWorkshopId, setBatchWorkshopId] = useState<string>('');
+  const [batchWorkshopId, setBatchWorkshopId] = useState<string>(() => initialWorkshopId);
   const [batchAgreedLabor, setBatchAgreedLabor] = useState<number>(0);
   const [laborManuallyEdited, setLaborManuallyEdited] = useState(false);
   const [batchAdvance, setBatchAdvance] = useState<number>(0);
@@ -352,6 +368,7 @@ export const ProductionView: React.FC = () => {
       notes: batchNotes,
       variants,
     });
+    clearPendingProductionModel();
     setBatchModalOpen(false);
     setVariantQtyMap({});
     setBatchNotes('');
@@ -372,6 +389,8 @@ export const ProductionView: React.FC = () => {
   const handleRecordWorkshopPayout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!payoutOrder || payoutAmount <= 0) return;
+    const remaining = getOrderRemainingWorkshop(payoutOrder);
+    if (remaining > 0 && payoutAmount > remaining + 0.009) return;
     const targetId = payoutOrder.id;
     await runAction(targetId, async () => {
       await recordWorkshopPayment(targetId, payoutAmount, payoutMethod, payoutNotes);
@@ -389,11 +408,14 @@ export const ProductionView: React.FC = () => {
   const handleConfirmComplete = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!completeOrder) return;
+    const remaining = getOrderRemainingWorkshop(completeOrder);
+    const safePay = Math.max(0, Number(deliveryPayAmount) || 0);
+    if (remaining > 0 && safePay > remaining + 0.009) return;
     const targetId = completeOrder.id;
     await runAction(targetId, async () => {
       await completeProductionBatch(
         targetId,
-        Math.max(0, Number(deliveryPayAmount) || 0),
+        safePay,
         deliveryPayMethod
       );
     });
@@ -710,16 +732,18 @@ export const ProductionView: React.FC = () => {
                         تعديل
                       </button>
                     )}
-                    <button
-                      type="button"
-                      disabled={busyId === po.id}
-                      onClick={() => void runAction(po.id, () => deleteProductionBatch(po.id))}
-                      aria-label="حذف أمر التصنيع"
-                      className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      حذف
-                    </button>
+                    {userRole === 'admin' && (
+                      <button
+                        type="button"
+                        disabled={busyId === po.id}
+                        onClick={() => void runAction(po.id, () => deleteProductionBatch(po.id))}
+                        aria-label="حذف أمر التصنيع"
+                        className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        حذف
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -872,16 +896,18 @@ export const ProductionView: React.FC = () => {
                             تعديل
                           </button>
                         )}
-                        <button
-                          type="button"
-                          disabled={busyId === po.id}
-                          onClick={() => void runAction(po.id, () => deleteProductionBatch(po.id))}
-                          title="حذف أمر التصنيع وعكس الخامات المصروفة والمنتج التام ورصيد الورشة"
-                          className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          حذف
-                        </button>
+                        {userRole === 'admin' && (
+                          <button
+                            type="button"
+                            disabled={busyId === po.id}
+                            onClick={() => void runAction(po.id, () => deleteProductionBatch(po.id))}
+                            title="حذف أمر التصنيع وعكس الخامات المصروفة والمنتج التام ورصيد الورشة"
+                            className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            حذف
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -943,24 +969,26 @@ export const ProductionView: React.FC = () => {
                     >
                       <Edit3 className="w-4 h-4" />
                     </button>
-                    <button
-                      type="button"
-                      disabled={busyId === v.id}
-                      onClick={() => void runAction(v.id, () => deleteModelVariant(v.id))}
-                      aria-label="حذف الصنف"
-                      title={
-                        isLinked
-                          ? 'لا يمكن الحذف — الصنف مرتبط بمبيعات أو أوامر تصنيع'
-                          : 'حذف الصنف من مخزون المنتج التام'
-                      }
-                      className={`p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
-                        isLinked
-                          ? 'text-[#B8B4AA] hover:text-amber-700 hover:bg-amber-50'
-                          : 'text-[#6E6C66] hover:text-red-600 hover:bg-red-50'
-                      }`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {userRole === 'admin' && (
+                      <button
+                        type="button"
+                        disabled={busyId === v.id}
+                        onClick={() => void runAction(v.id, () => deleteModelVariant(v.id))}
+                        aria-label="حذف الصنف"
+                        title={
+                          isLinked
+                            ? 'لا يمكن الحذف — الصنف مرتبط بمبيعات أو أوامر تصنيع'
+                            : 'حذف الصنف من مخزون المنتج التام'
+                        }
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
+                          isLinked
+                            ? 'text-[#B8B4AA] hover:text-amber-700 hover:bg-amber-50'
+                            : 'text-[#6E6C66] hover:text-red-600 hover:bg-red-50'
+                        }`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs bg-[#FAF9F7] rounded-xl p-2.5 border border-[#F0EFEA]">
@@ -1040,24 +1068,26 @@ export const ProductionView: React.FC = () => {
                           <Edit3 className="w-3.5 h-3.5" />
                           <span>تعديل</span>
                         </button>
-                        <button
-                          type="button"
-                          disabled={busyId === v.id}
-                          onClick={() => void runAction(v.id, () => deleteModelVariant(v.id))}
-                          title={
-                            isLinked
-                              ? 'لا يمكن الحذف — الصنف مرتبط بمبيعات أو أوامر تصنيع'
-                              : 'حذف الصنف من مخزون المنتج التام'
-                          }
-                          className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
-                            isLinked
-                              ? 'text-[#9C9990] hover:text-amber-700 hover:bg-amber-50'
-                              : 'text-red-700 hover:bg-red-50'
-                          }`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>حذف</span>
-                        </button>
+                        {userRole === 'admin' && (
+                          <button
+                            type="button"
+                            disabled={busyId === v.id}
+                            onClick={() => void runAction(v.id, () => deleteModelVariant(v.id))}
+                            title={
+                              isLinked
+                                ? 'لا يمكن الحذف — الصنف مرتبط بمبيعات أو أوامر تصنيع'
+                                : 'حذف الصنف من مخزون المنتج التام'
+                            }
+                            className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
+                              isLinked
+                                ? 'text-[#9C9990] hover:text-amber-700 hover:bg-amber-50'
+                                : 'text-red-700 hover:bg-red-50'
+                            }`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>حذف</span>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1081,6 +1111,7 @@ export const ProductionView: React.FC = () => {
         onClose={() => {
           setBatchModalOpen(false);
           setEditingBatch(null);
+          clearPendingProductionModel();
         }}
         title={
           editingBatch
@@ -1370,6 +1401,7 @@ export const ProductionView: React.FC = () => {
               onClick={() => {
                 setBatchModalOpen(false);
                 setEditingBatch(null);
+                clearPendingProductionModel();
               }}
               className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
             >
@@ -1403,133 +1435,34 @@ export const ProductionView: React.FC = () => {
             : ''
         }
       >
-        <form onSubmit={handleRecordWorkshopPayout} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold mb-1">قيمة الدفعة *</label>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                required
-                value={payoutAmount}
-                onChange={(e) => setPayoutAmount(Number(e.target.value))}
-                className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm font-bold tabular-nums"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">طريقة الدفع</label>
-              <select
-                value={payoutMethod}
-                onChange={(e) => setPayoutMethod(e.target.value)}
-                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
-              >
-                {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold mb-1">البيان</label>
-            <input
-              type="text"
-              value={payoutNotes}
-              onChange={(e) => setPayoutNotes(e.target.value)}
-              className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
-            />
-          </div>
-
-          <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-semibold">
-            ✓ تُخصم الدفعة تلقائياً من رصيد الخزنة (المتاح) وتُسجّل كـ «خامات / تشغيل» بدون تكرارها كمصروف في الأرباح والخسائر (P&amp;L).
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
-            <button
-              type="button"
-              onClick={() => setPayoutOrder(null)}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
-            >
-              إلغاء
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold cursor-pointer"
-            >
-              تأكيد الدفع للورشة
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Complete Production & Final Workshop Settlement Modal */}
-      <Modal
-        open={Boolean(completeOrder)}
-        onClose={() => setCompleteOrder(null)}
-        title={`استلام المنتج التام وتسوية الورشة (${completeOrder?.batchNumber || ''})`}
-        subtitle="سيتم إضافة القطع الجاهزة لمخزون المنتج التام وحساب التكلفة الفعلية للقطعة (COGS)"
-      >
-        {completeOrder && (
-          <form onSubmit={handleConfirmComplete} className="space-y-4">
-            <div className="rounded-xl bg-[#FAF9F7] border border-[#E5E3DD] p-3.5 space-y-2 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-[#6E6C66]">الورشة:</span>
-                <span className="font-bold text-[#1A1A1E]">
-                  {getOrderWorkshopLabel(completeOrder)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[#6E6C66]">الكمية المستلمة للمخزن التام:</span>
-                <span className="font-bold text-[#1A1A1E] tabular-nums">
-                  {completeOrder.plannedQty} قطعة
-                </span>
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-[#EAE8E2]">
-                <span className="text-[#6E6C66]">إجمالي أجر الورشة:</span>
-                <span className="font-bold tabular-nums">
-                  {formatMoney(getOrderTotalLabor(completeOrder), state.currency)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[#6E6C66]">المدفوع مسبقاً (تحت الحساب):</span>
-                <span className="font-bold text-emerald-700 tabular-nums">
-                  {formatMoney(completeOrder.paidToWorkshop || 0, state.currency)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-[#1A1A1E]">الباقي المستحق للورشة:</span>
-                <span className="font-extrabold text-red-600 tabular-nums">
-                  {formatMoney(getOrderRemainingWorkshop(completeOrder), state.currency)}
-                </span>
-              </div>
-            </div>
-
-            <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 space-y-3">
-              <div className="text-xs font-bold text-[#7B5836]">
-                السداد للورشة مع الاستلام الآن (اتركه 0 إذا ستسدد لاحقاً)
-              </div>
+        {payoutOrder && (() => {
+          const payoutRemaining = getOrderRemainingWorkshop(payoutOrder);
+          const payoutOverLimit = payoutRemaining > 0 && payoutAmount > payoutRemaining + 0.009;
+          return (
+            <form onSubmit={handleRecordWorkshopPayout} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-semibold mb-1">
-                    المبلغ المدفوع الآن
-                  </label>
+                  <label className="block text-xs font-semibold mb-1">قيمة الدفعة *</label>
                   <input
                     type="number"
-                    min="0"
+                    min="0.01"
+                    max={payoutRemaining > 0 ? payoutRemaining : undefined}
                     step="0.01"
-                    value={deliveryPayAmount}
-                    onChange={(e) => setDeliveryPayAmount(Number(e.target.value))}
-                    className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm font-bold text-emerald-700 tabular-nums"
+                    required
+                    value={payoutAmount}
+                    onChange={(e) => setPayoutAmount(Number(e.target.value))}
+                    className={`w-full rounded-xl border px-3 py-2 text-sm font-bold tabular-nums ${
+                      payoutOverLimit
+                        ? 'border-red-400 bg-red-50 text-red-700'
+                        : 'border-[#E5E3DD]'
+                    }`}
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold mb-1">طريقة الدفع</label>
+                  <label className="block text-xs font-semibold mb-1">طريقة الدفع</label>
                   <select
-                    value={deliveryPayMethod}
-                    onChange={(e) => setDeliveryPayMethod(e.target.value)}
+                    value={payoutMethod}
+                    onChange={(e) => setPayoutMethod(e.target.value)}
                     className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
                   >
                     {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
@@ -1540,25 +1473,167 @@ export const ProductionView: React.FC = () => {
                   </select>
                 </div>
               </div>
-            </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
-              <button
-                type="button"
-                onClick={() => setCompleteOrder(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
-              >
-                إلغاء
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold cursor-pointer"
-              >
-                تأكيد الاستلام والتسوية
-              </button>
-            </div>
-          </form>
-        )}
+              {payoutOverLimit && (
+                <div className="flex items-start gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 font-semibold">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    المبلغ المدخل ({formatMoney(payoutAmount, state.currency)}) يتجاوز المتبقي
+                    المستحق للورشة ({formatMoney(payoutRemaining, state.currency)}). يرجى تعديل
+                    المبلغ لمنع السداد بالزيادة.
+                  </span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">البيان</label>
+                <input
+                  type="text"
+                  value={payoutNotes}
+                  onChange={(e) => setPayoutNotes(e.target.value)}
+                  className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+                />
+              </div>
+
+              <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-semibold">
+                ✓ تُخصم الدفعة تلقائياً من رصيد الخزنة (المتاح) وتُسجّل كـ «خامات / تشغيل» بدون
+                تكرارها كمصروف في الأرباح والخسائر (P&amp;L).
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+                <button
+                  type="button"
+                  onClick={() => setPayoutOrder(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={payoutOverLimit || payoutAmount <= 0}
+                  className="px-5 py-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  تأكيد الدفع للورشة
+                </button>
+              </div>
+            </form>
+          );
+        })()}
+      </Modal>
+
+      {/* Complete Production & Final Workshop Settlement Modal */}
+      <Modal
+        open={Boolean(completeOrder)}
+        onClose={() => setCompleteOrder(null)}
+        title={`استلام المنتج التام وتسوية الورشة (${completeOrder?.batchNumber || ''})`}
+        subtitle="سيتم إضافة القطع الجاهزة لمخزون المنتج التام وحساب التكلفة الفعلية للقطعة (COGS)"
+      >
+        {completeOrder && (() => {
+          const deliveryRemaining = getOrderRemainingWorkshop(completeOrder);
+          const deliveryOverLimit =
+            deliveryRemaining > 0 && deliveryPayAmount > deliveryRemaining + 0.009;
+          return (
+            <form onSubmit={handleConfirmComplete} className="space-y-4">
+              <div className="rounded-xl bg-[#FAF9F7] border border-[#E5E3DD] p-3.5 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[#6E6C66]">الورشة:</span>
+                  <span className="font-bold text-[#1A1A1E]">
+                    {getOrderWorkshopLabel(completeOrder)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[#6E6C66]">الكمية المستلمة للمخزن التام:</span>
+                  <span className="font-bold text-[#1A1A1E] tabular-nums">
+                    {completeOrder.plannedQty} قطعة
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-[#EAE8E2]">
+                  <span className="text-[#6E6C66]">إجمالي أجر الورشة:</span>
+                  <span className="font-bold tabular-nums">
+                    {formatMoney(getOrderTotalLabor(completeOrder), state.currency)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[#6E6C66]">المدفوع مسبقاً (تحت الحساب):</span>
+                  <span className="font-bold text-emerald-700 tabular-nums">
+                    {formatMoney(completeOrder.paidToWorkshop || 0, state.currency)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[#1A1A1E]">الباقي المستحق للورشة:</span>
+                  <span className="font-extrabold text-red-600 tabular-nums">
+                    {formatMoney(deliveryRemaining, state.currency)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] p-3.5 space-y-3">
+                <div className="text-xs font-bold text-[#7B5836]">
+                  السداد للورشة مع الاستلام الآن (اتركه 0 إذا ستسدد لاحقاً)
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1">
+                      المبلغ المدفوع الآن
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max={deliveryRemaining > 0 ? deliveryRemaining : undefined}
+                      step="0.01"
+                      value={deliveryPayAmount}
+                      onChange={(e) => setDeliveryPayAmount(Number(e.target.value))}
+                      className={`w-full rounded-xl border bg-white px-3 py-2 text-sm font-bold tabular-nums ${
+                        deliveryOverLimit
+                          ? 'border-red-400 text-red-700'
+                          : 'border-[#E5E3DD] text-emerald-700'
+                      }`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1">طريقة الدفع</label>
+                    <select
+                      value={deliveryPayMethod}
+                      onChange={(e) => setDeliveryPayMethod(e.target.value)}
+                      className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-sm"
+                    >
+                      {getLookupLabels(state.lookups, 'payment_methods').map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {deliveryOverLimit && (
+                  <div className="flex items-start gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 font-semibold">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>
+                      مبلغ السداد يتجاوز المتبقي للورشة ({formatMoney(deliveryRemaining, state.currency)}).
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+                <button
+                  type="button"
+                  onClick={() => setCompleteOrder(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={deliveryOverLimit}
+                  className="px-5 py-2 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  تأكيد الاستلام والتسوية
+                </button>
+              </div>
+            </form>
+          );
+        })()}
       </Modal>
 
       {/* Add / Edit Variant Modal (with Opening Finished-Goods Stock & COGS) */}

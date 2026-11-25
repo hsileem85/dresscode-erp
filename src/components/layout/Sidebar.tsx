@@ -14,9 +14,11 @@ import {
   Receipt,
   Scissors,
   Settings2,
+  ShieldCheck,
   ShoppingBag,
   Users,
   Wallet,
+  Workflow,
   X,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
@@ -34,6 +36,7 @@ interface NavItem {
   label: string;
   sublabel: string;
   icon: React.FC<{ className?: string }>;
+  badge?: string;
 }
 
 const NAV_SECTIONS: { title?: string; items: NavItem[] }[] = [
@@ -44,6 +47,13 @@ const NAV_SECTIONS: { title?: string; items: NavItem[] }[] = [
         label: 'لوحة التحكم والأرباح (P&L)',
         sublabel: 'الملخص الشهري ونقطة التعادل',
         icon: LayoutDashboard,
+      },
+      {
+        id: 'workflow',
+        label: 'مسارات العمل الموجهة',
+        sublabel: 'تصنيع ذكي • إطلاق موديل • بيع وتحصيل',
+        icon: Workflow,
+        badge: 'ذكي',
       },
     ],
   },
@@ -134,7 +144,7 @@ const NAV_SECTIONS: { title?: string; items: NavItem[] }[] = [
       {
         id: 'audit',
         label: 'سجل التدقيق والأرشفة',
-        sublabel: 'من أضاف وعدّل + مساحة 500 MB',
+        sublabel: 'من أضاف وعدّل + الصلاحيات و 500 MB',
         icon: History,
       },
       {
@@ -154,6 +164,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
     state,
     setCurrency,
     user,
+    userRole,
     cloudConnected,
     signOut,
     setOfflineMode,
@@ -241,9 +252,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
                         isActive ? 'text-white' : 'text-[#A67C52]'
                       }`}
                     />
-                    <div className="min-w-0">
-                      <div className="text-xs sm:text-sm font-semibold leading-snug truncate">
-                        {item.label}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="text-xs sm:text-sm font-semibold leading-snug truncate">
+                          {item.label}
+                        </span>
+                        {item.badge && (
+                          <span
+                            className={`shrink-0 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full ${
+                              isActive
+                                ? 'bg-white/20 text-white'
+                                : 'bg-[#A67C52]/25 text-[#DFB88C]'
+                            }`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
                       </div>
                       <div
                         className={`text-[10px] truncate mt-0.5 ${
@@ -271,8 +295,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
                   }`}
                 />
                 <div className="min-w-0">
-                  <div className="text-[11px] font-bold text-white truncate">
-                    {cloudConnected ? 'PostgreSQL متصل' : 'وضع محلي تجريبي'}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold text-white truncate">
+                      {cloudConnected ? 'PostgreSQL متصل' : 'وضع محلي تجريبي'}
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                        userRole === 'admin'
+                          ? 'bg-[#A67C52]/25 text-[#DFB88C]'
+                          : 'bg-sky-500/20 text-sky-300'
+                      }`}
+                    >
+                      <ShieldCheck className="w-2.5 h-2.5" />
+                      {userRole === 'admin' ? 'مدير' : 'مدخل بيانات'}
+                    </span>
                   </div>
                   {user?.email && (
                     <div className="text-[10px] text-[#9C9990] truncate" dir="ltr">

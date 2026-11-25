@@ -19,6 +19,7 @@ import { ProductionView } from './components/production/ProductionView';
 import { PurchasesView } from './components/purchases/PurchasesView';
 import { ReportsView } from './components/reports/ReportsView';
 import { SalesView } from './components/sales/SalesView';
+import { WorkflowHubView } from './components/workflow/WorkflowHubView';
 import { ERPProvider, useERP } from './context/ERPContext';
 import { isSupabaseConfigured } from './lib/supabase';
 
@@ -93,6 +94,7 @@ const ERPShell: React.FC = () => {
 
         <main className="flex-1 p-3.5 sm:p-6 lg:p-8 pb-24 lg:pb-8 max-w-[1600px] w-full mx-auto">
           {activeTab === 'dashboard' && <DashboardView />}
+          {activeTab === 'workflow' && <WorkflowHubView />}
           {activeTab === 'basicdata' && <BasicDataView />}
           {activeTab === 'materials' && <MaterialsView />}
           {activeTab === 'models' && <ModelsBOMView />}

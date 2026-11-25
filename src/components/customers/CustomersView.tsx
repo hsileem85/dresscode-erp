@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Crown, Edit3, MapPin, Plus, Search, Trash2, Users } from 'lucide-react';
+import { AlertTriangle, Crown, Edit3, MapPin, Plus, Search, Trash2, Users } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
@@ -18,8 +18,15 @@ const EMPTY_CUSTOMER: Omit<Customer, 'id'> = {
   notes: '',
 };
 
+function normalizePhoneDigits(phone?: string): string {
+  const digits = (phone || '').replace(/\D+/g, '');
+  if (digits.startsWith('0020') && digits.length >= 14) return digits.slice(3);
+  if (digits.startsWith('20') && digits.length >= 12) return `0${digits.slice(2)}`;
+  return digits;
+}
+
 export const CustomersView: React.FC = () => {
-  const { state, saveCustomer, deleteCustomer } = useERP();
+  const { state, userRole, saveCustomer, deleteCustomer } = useERP();
   const [query, setQuery] = useState('');
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [debtOnly, setDebtOnly] = useState(false);
@@ -27,6 +34,16 @@ export const CustomersView: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<Omit<Customer, 'id'>>(EMPTY_CUSTOMER);
+
+  const duplicatePhoneCustomer = useMemo(() => {
+    const norm = normalizePhoneDigits(form.phone);
+    if (norm.length < 7) return null;
+    return (
+      state.customers.find(
+        (c) => c.id !== editingId && normalizePhoneDigits(c.phone) === norm
+      ) || null
+    );
+  }, [form.phone, editingId, state.customers]);
 
   const enriched = useMemo(() => {
     return state.customers.map((c) => {
@@ -264,14 +281,16 @@ export const CustomersView: React.FC = () => {
                   >
                     <Edit3 className="w-4 h-4" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteCustomer(row.customer.id)}
-                    aria-label="حذف"
-                    className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {userRole === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => deleteCustomer(row.customer.id)}
+                      aria-label="حذف"
+                      className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -387,13 +406,15 @@ export const CustomersView: React.FC = () => {
                       >
                         <Edit3 className="w-4 h-4" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteCustomer(row.customer.id)}
-                        className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {userRole === 'admin' && (
+                        <button
+                          type="button"
+                          onClick={() => deleteCustomer(row.customer.id)}
+                          className="p-1.5 rounded-lg text-[#9C9990] hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -436,8 +457,21 @@ export const CustomersView: React.FC = () => {
                 dir="ltr"
                 value={form.phone}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm text-left"
+                className={`w-full rounded-xl border px-3 py-2 text-sm text-left ${
+                  duplicatePhoneCustomer
+                    ? 'border-amber-400 bg-amber-50/50'
+                    : 'border-[#E5E3DD]'
+                }`}
               />
+              {duplicatePhoneCustomer && (
+                <div className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
+                  <span>
+                    تنبيه: هذا الرقم مسجل مسبقاً للعميل «{duplicatePhoneCustomer.name}» — راجع
+                    البيانات لتجنب تكرار حساب العميل.
+                  </span>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold mb-1">المنصة</label>

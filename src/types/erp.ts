@@ -1,5 +1,6 @@
 export type NavTab =
   | 'dashboard'
+  | 'workflow'
   | 'materials'
   | 'models'
   | 'labor'
@@ -429,4 +430,38 @@ export interface AuditLogStats {
   dbTotalMb: number;
   dbLimitMb: number;
   months: AuditMonthSummary[];
+}
+
+export type UserRole = 'admin' | 'staff';
+
+export interface UserRoleRecord {
+  email: string;
+  role: UserRole;
+  displayName?: string;
+  updatedAt?: string;
+}
+
+export interface PendingPoDraftLine {
+  itemType: 'fabric' | 'trim';
+  refId: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface PendingPoDraft {
+  supplierId?: string;
+  supplierName?: string;
+  notes?: string;
+  sourceLabel?: string;
+  lines: PendingPoDraftLine[];
+}
+
+export interface SalesExchangeReturnPayload {
+  saleId: string;
+  returnVariantId: string;
+  returnQty: number;
+  replacementVariantId?: string | null;
+  replacementQty?: number;
+  priceDiff?: number;
+  notes?: string;
 }

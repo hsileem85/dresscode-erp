@@ -25,10 +25,13 @@ import type {
   OutsourcedOperation,
   OverheadItem,
   PartnerContribution,
+  PendingPoDraft,
   ProductModel,
   SalesChannel,
+  SalesExchangeReturnPayload,
   Supplier,
   TrimAccessory,
+  UserRole,
   Workshop,
 } from '../types/erp';
 
@@ -43,8 +46,17 @@ interface ERPContextValue {
   openModelInCalculator: (modelId: string) => void;
   openModelInBOM: (modelId: string) => void;
 
+  // Guided Workflow handoffs
+  pendingPoDraft: PendingPoDraft | null;
+  openAutoPoDraft: (draft: PendingPoDraft) => void;
+  clearPendingPoDraft: () => void;
+  pendingProductionModelId: string | null;
+  openProductionForModel: (modelId: string) => void;
+  clearPendingProductionModel: () => void;
+
   // Cloud / Auth state
   user: User | null;
+  userRole: UserRole;
   authChecked: boolean;
   passwordRecoveryMode: boolean;
   clearPasswordRecovery: () => void;
@@ -101,6 +113,7 @@ interface ERPContextValue {
   importModels: (models: ProductModel[]) => void;
   applyTargetMarginToAllModels: (targetMarginPct: number) => Promise<boolean>;
   addModelVariant: (variant: Omit<ModelVariant, 'id'>) => Promise<void>;
+  addModelVariantsBatch: (variants: Omit<ModelVariant, 'id'>[]) => Promise<number>;
   updateModelVariant: (variant: ModelVariant) => Promise<void>;
   deleteModelVariant: (variantId: string) => Promise<void>;
 
@@ -129,6 +142,12 @@ interface ERPContextValue {
     }[];
   }) => Promise<void>;
   receivePO: (poId: string) => Promise<void>;
+  recordSupplierPayment: (
+    poId: string,
+    amount: number,
+    paymentMethod?: string,
+    notes?: string
+  ) => Promise<void>;
   cancelPO: (poId: string) => Promise<void>;
   deletePO: (poId: string) => Promise<void>;
 
@@ -184,6 +203,8 @@ interface ERPContextValue {
   confirmSalesOrder: (saleId: string) => Promise<void>;
   recordSalesPayment: (saleId: string, amount: number, method?: string) => Promise<void>;
   updateSalesFulfillment: (saleId: string, status: string) => Promise<void>;
+  processSalesExchangeReturn: (payload: SalesExchangeReturnPayload) => Promise<void>;
+  bulkSettleSalesOrders: (orderIds: string[], paymentMethod?: string) => Promise<number>;
   cancelSalesOrder: (saleId: string) => Promise<void>;
   deleteSalesOrder: (saleId: string) => Promise<void>;
 
@@ -280,6 +301,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const [user, setUser] = useState<User | null>(null);
+  const [userRole, setUserRole] = useState<UserRole>('admin');
+  const [pendingPoDraft, setPendingPoDraft] = useState<PendingPoDraft | null>(null);
+  const [pendingProductionModelId, setPendingProductionModelId] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState<boolean>(!isSupabaseConfigured);
   const [passwordRecoveryMode, setPasswordRecoveryMode] = useState<boolean>(() =>
     typeof window !== 'undefined' && window.location.hash.includes('type=recovery')
@@ -288,6 +312,25 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [migration003Missing, setMigration003Missing] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  const openAutoPoDraft = useCallback((draft: PendingPoDraft) => {
+    setPendingPoDraft(draft);
+    setActiveTab('purchases');
+  }, []);
+
+  const clearPendingPoDraft = useCallback(() => {
+    setPendingPoDraft(null);
+  }, []);
+
+  const openProductionForModel = useCallback((modelId: string) => {
+    setSelectedModelId(modelId);
+    setPendingProductionModelId(modelId);
+    setActiveTab('production');
+  }, []);
+
+  const clearPendingProductionModel = useCallback(() => {
+    setPendingProductionModelId(null);
+  }, []);
 
   const clearPasswordRecovery = useCallback(() => {
     setPasswordRecoveryMode(false);
@@ -323,8 +366,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSyncing(true);
     setSyncError(null);
     try {
-      const { state: fresh, migration003Missing: missing } = await fetchFullERPState();
+      const [{ state: fresh, migration003Missing: missing }, role] = await Promise.all([
+        fetchFullERPState(),
+        erpDb.getMyUserRole().catch(() => 'admin' as UserRole),
+      ]);
       setState(fresh);
+      setUserRole(role);
       setMigration003Missing(missing);
       setSelectedModelId((prev) =>
         fresh.models.some((m) => m.id === prev) ? prev : fresh.models[0]?.id ?? null
@@ -857,6 +904,27 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
+  const addModelVariantsBatch = async (variants: Omit<ModelVariant, 'id'>[]): Promise<number> => {
+    if (variants.length === 0) return 0;
+    if (cloudConnected) {
+      await runCloud(async () => {
+        for (const v of variants) {
+          await erpDb.createVariant(v);
+        }
+      });
+      return variants.length;
+    }
+    const createdList: ModelVariant[] = variants.map((v) => ({ ...v, id: newUuid() }));
+    setState((prev) => ({
+      ...prev,
+      models: prev.models.map((m) => {
+        const toAdd = createdList.filter((c) => c.modelId === m.id);
+        return toAdd.length > 0 ? { ...m, variants: [...m.variants, ...toAdd] } : m;
+      }),
+    }));
+    return createdList.length;
+  };
+
   const updateModelVariant = async (variant: ModelVariant) => {
     const existing = state.models
       .flatMap((m) => m.variants)
@@ -1116,6 +1184,60 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ),
       };
     });
+  };
+
+  const recordSupplierPayment = async (
+    poId: string,
+    amount: number,
+    paymentMethod = 'كاش',
+    notes = ''
+  ) => {
+    const po = state.purchaseOrders.find((p) => p.id === poId);
+    if (!po || po.status === 'cancelled') return;
+    const safeAmt = Math.round((Number(amount) || 0) * 100) / 100;
+    const remaining = Math.max(0, (po.totalAmount || 0) - (po.paidAmount || 0));
+    if (safeAmt <= 0) return;
+    if (safeAmt > remaining + 0.01) {
+      setSyncError(
+        `لا يمكن سداد مبلغ (${formatMoney(safeAmt, state.currency)}) أكبر من المتبقي المستحق (${formatMoney(remaining, state.currency)}).`
+      );
+      return;
+    }
+
+    if (cloudConnected) {
+      await runCloud(() =>
+        erpDb.recordSupplierPayment(poId, safeAmt, paymentMethod, notes, po)
+      );
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    setState((prev) => ({
+      ...prev,
+      purchaseOrders: prev.purchaseOrders.map((p) =>
+        p.id === poId ? { ...p, paidAmount: Math.round((p.paidAmount + safeAmt) * 100) / 100 } : p
+      ),
+      suppliers: po.supplierId
+        ? prev.suppliers.map((s) =>
+            s.id === po.supplierId
+              ? { ...s, balancePayable: Math.max(0, Math.round((s.balancePayable - safeAmt) * 100) / 100) }
+              : s
+          )
+        : prev.suppliers,
+      expenses: [
+        {
+          id: newUuid(),
+          expenseDate: today,
+          title: `دفعة لمورد (${po.supplierName}) — أمر شراء ${po.poNumber}`,
+          category: 'خامات',
+          isRawMaterialPurchase: true,
+          amount: safeAmt,
+          paymentMethod: paymentMethod || 'كاش',
+          notes: notes.trim() || `سداد تلقائي من المشتريات — ${po.poNumber}`,
+        },
+        ...prev.expenses,
+      ],
+    }));
   };
 
   const cancelPO = async (poId: string) => {
@@ -1907,6 +2029,166 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const processSalesExchangeReturn = async (payload: SalesExchangeReturnPayload) => {
+    const so = state.salesOrders.find((s) => s.id === payload.saleId);
+    if (!so || so.status === 'cancelled') return;
+
+    if (cloudConnected) {
+      await runCloud(() => erpDb.processSalesExchangeReturn(payload));
+      return;
+    }
+
+    // Offline local exchange / partial return handling
+    const retQty = Math.max(1, Math.trunc(payload.returnQty));
+    const repId = payload.replacementVariantId || null;
+    const repQty = repId ? Math.max(1, Math.trunc(payload.replacementQty || retQty)) : 0;
+    const diff = Number(payload.priceDiff) || 0;
+
+    setState((prev) => {
+      const target = prev.salesOrders.find((s) => s.id === payload.saleId);
+      if (!target) return prev;
+      const retLine = target.items.find((it) => it.variantId === payload.returnVariantId);
+      if (!retLine || retQty > retLine.quantity) return prev;
+
+      const nextModels = prev.models.map((m) => ({
+        ...m,
+        variants: m.variants.map((v) => {
+          if (v.id === payload.returnVariantId) {
+            return { ...v, finishedGoodsQty: v.finishedGoodsQty + retQty };
+          }
+          if (repId && v.id === repId) {
+            return { ...v, finishedGoodsQty: Math.max(0, v.finishedGoodsQty - repQty) };
+          }
+          return v;
+        }),
+      }));
+
+      let nextItems = target.items
+        .map((it) =>
+          it.variantId === payload.returnVariantId
+            ? {
+                ...it,
+                quantity: it.quantity - retQty,
+                lineTotal: (it.quantity - retQty) * it.unitPrice,
+                lineCogs: (it.quantity - retQty) * it.unitCogsSnapshot,
+              }
+            : it
+        )
+        .filter((it) => it.quantity > 0);
+
+      if (repId && repQty > 0) {
+        const repVar = prev.models.flatMap((m) => m.variants).find((v) => v.id === repId);
+        const repPrice = Math.max(0, retLine.unitPrice + diff / repQty);
+        const repCogs = repVar?.avgUnitCogs || retLine.unitCogsSnapshot;
+        const exists = nextItems.find((it) => it.variantId === repId);
+        if (exists) {
+          nextItems = nextItems.map((it) =>
+            it.variantId === repId
+              ? {
+                  ...it,
+                  quantity: it.quantity + repQty,
+                  lineTotal: (it.quantity + repQty) * it.unitPrice,
+                  lineCogs: (it.quantity + repQty) * it.unitCogsSnapshot,
+                }
+              : it
+          );
+        } else {
+          nextItems.push({
+            id: newUuid(),
+            variantId: repId,
+            quantity: repQty,
+            unitPrice: repPrice,
+            unitCogsSnapshot: repCogs,
+            lineTotal: repQty * repPrice,
+            lineCogs: repQty * repCogs,
+          });
+        }
+      }
+
+      const subtotal = nextItems.reduce((s, it) => s + it.lineTotal, 0);
+      const totalCogs = nextItems.reduce((s, it) => s + it.lineCogs, 0);
+      const totalAmount = Math.max(0, Math.round((subtotal - target.discountAmount + target.shippingFee) * 100) / 100);
+      const paidAmount = Math.min(target.paidAmount, totalAmount);
+      const remainingDebt = Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100);
+
+      return {
+        ...prev,
+        models: nextModels,
+        salesOrders: prev.salesOrders.map((s) =>
+          s.id === payload.saleId
+            ? {
+                ...s,
+                items: nextItems,
+                subtotal,
+                totalAmount,
+                totalCogs,
+                grossProfit: totalAmount - totalCogs,
+                paidAmount,
+                remainingDebt,
+                paymentStatus: computePaymentStatus(totalAmount, paidAmount),
+                status: subtotal <= 0 ? 'returned' : s.status,
+                fulfillmentStatus: subtotal <= 0 ? 'مرتجع' : s.fulfillmentStatus,
+              }
+            : s
+        ),
+      };
+    });
+  };
+
+  const bulkSettleSalesOrders = async (
+    orderIds: string[],
+    paymentMethod = 'تحويل'
+  ): Promise<number> => {
+    const targets = state.salesOrders.filter(
+      (s) => orderIds.includes(s.id) && s.status !== 'cancelled' && s.status !== 'returned'
+    );
+    if (targets.length === 0) return 0;
+
+    const totalCollect = targets.reduce((sum, o) => sum + Math.max(0, o.remainingDebt || 0), 0);
+    const ok = await confirmAction({
+      title: 'تأكيد التسوية الجماعية للطلبات (شركة الشحن COD)',
+      message: `هل تريد تسوية عدد (${targets.length}) طلب وتحويلها إلى «مكتمل» وتحصيل إجمالي المتبقي (${formatMoney(
+        totalCollect,
+        state.currency
+      )})؟`,
+      detail: `سيتم تسجيل تحصيل المتبقي لكل طلب تلقائياً بطريقة «${paymentMethod}» وتحديث رصيد الخزنة وحالة التسليم.`,
+      confirmLabel: `نعم، تسوية ${targets.length} طلب`,
+      tone: 'warning',
+    });
+    if (!ok) return 0;
+
+    if (cloudConnected) {
+      await runCloud(async () => {
+        for (const o of targets) {
+          const rem = Math.max(0, Math.round((o.remainingDebt || 0) * 100) / 100);
+          if (rem > 0.01) {
+            await erpDb.recordSalesPayment(o.id, rem, paymentMethod);
+          }
+          if (o.fulfillmentStatus !== 'مكتمل') {
+            await erpDb.updateSalesFulfillment(o.id, 'مكتمل');
+          }
+        }
+      });
+      return targets.length;
+    }
+
+    const idSet = new Set(targets.map((t) => t.id));
+    setState((prev) => ({
+      ...prev,
+      salesOrders: prev.salesOrders.map((s) => {
+        if (!idSet.has(s.id)) return s;
+        return {
+          ...s,
+          paidAmount: s.totalAmount,
+          remainingDebt: 0,
+          paymentStatus: 'مدفوع بالكامل',
+          fulfillmentStatus: 'مكتمل',
+        };
+      }),
+    }));
+    return targets.length;
+  };
+
   const cancelSalesOrder = async (saleId: string) => {
     const so = state.salesOrders.find((s) => s.id === saleId);
     if (!so || so.status === 'cancelled') return;
@@ -2080,7 +2362,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedModelId,
         openModelInCalculator,
         openModelInBOM,
+        pendingPoDraft,
+        openAutoPoDraft,
+        clearPendingPoDraft,
+        pendingProductionModelId,
+        openProductionForModel,
+        clearPendingProductionModel,
         user,
+        userRole,
         authChecked,
         passwordRecoveryMode,
         clearPasswordRecovery,
@@ -2121,6 +2410,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         importModels,
         applyTargetMarginToAllModels,
         addModelVariant,
+        addModelVariantsBatch,
         updateModelVariant,
         deleteModelVariant,
         setMonthlyVolume,
@@ -2128,6 +2418,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteOverheadItem,
         createAndReceivePO,
         receivePO,
+        recordSupplierPayment,
         cancelPO,
         deletePO,
         createProductionBatch,
@@ -2140,6 +2431,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         confirmSalesOrder,
         recordSalesPayment,
         updateSalesFulfillment,
+        processSalesExchangeReturn,
+        bulkSettleSalesOrders,
         cancelSalesOrder,
         deleteSalesOrder,
         importFullJSON,

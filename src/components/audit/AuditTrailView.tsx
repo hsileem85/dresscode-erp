@@ -13,12 +13,20 @@ import {
   ShieldCheck,
   Trash2,
   User as UserIcon,
+  UserCog,
+  UserPlus,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useConfirm } from '../common/ConfirmDialog';
 import { useERP } from '../../context/ERPContext';
 import { erpDb } from '../../lib/supabase';
-import type { AuditAction, AuditLogEntry, AuditLogStats } from '../../types/erp';
+import type {
+  AuditAction,
+  AuditLogEntry,
+  AuditLogStats,
+  UserRole,
+  UserRoleRecord,
+} from '../../types/erp';
 import { formatNumber } from '../../utils/calculations';
 
 const ENTITY_OPTIONS: { value: string; label: string }[] = [
@@ -124,7 +132,7 @@ function isDiffEntry(val: unknown): val is { old: unknown; new: unknown } {
 const PAGE_SIZE = 50;
 
 export const AuditTrailView: React.FC = () => {
-  const { cloudConnected } = useERP();
+  const { cloudConnected, userRole, user } = useERP();
   const confirmAction = useConfirm();
 
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
@@ -134,6 +142,14 @@ export const AuditTrailView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+
+  // User Role Management (Admin Only)
+  const [roles, setRoles] = useState<UserRoleRecord[]>([]);
+  const [rolesMissingTable, setRolesMissingTable] = useState(false);
+  const [roleEmail, setRoleEmail] = useState('');
+  const [roleDisplayName, setRoleDisplayName] = useState('');
+  const [roleValue, setRoleValue] = useState<UserRole>('staff');
+  const [roleSaving, setRoleSaving] = useState(false);
 
   // Filters
   const [monthFilter, setMonthFilter] = useState('');
@@ -149,7 +165,7 @@ export const AuditTrailView: React.FC = () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const [logsRes, statsRes] = await Promise.all([
+      const [logsRes, statsRes, rolesRes] = await Promise.all([
         erpDb.fetchAuditLogs({
           month: monthFilter || undefined,
           tableName: tableFilter || undefined,
@@ -159,6 +175,9 @@ export const AuditTrailView: React.FC = () => {
           offset: page * PAGE_SIZE,
         }),
         erpDb.getAuditLogStats(),
+        userRole === 'admin'
+          ? erpDb.fetchUserRoles()
+          : Promise.resolve({ rows: [] as UserRoleRecord[], missingTable: false }),
       ]);
 
       if (logsRes.missingMigration || statsRes.missingMigration) {
@@ -172,12 +191,15 @@ export const AuditTrailView: React.FC = () => {
         setTotalCount(logsRes.totalCount);
         setStats(statsRes.stats);
       }
+
+      setRolesMissingTable(rolesRes.missingTable);
+      setRoles(rolesRes.rows);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'تعذّر تحميل سجل التدقيق');
     } finally {
       setLoading(false);
     }
-  }, [cloudConnected, monthFilter, tableFilter, actionFilter, searchFilter, page]);
+  }, [cloudConnected, userRole, monthFilter, tableFilter, actionFilter, searchFilter, page]);
 
   useEffect(() => {
     let active = true;
@@ -190,6 +212,63 @@ export const AuditTrailView: React.FC = () => {
       active = false;
     };
   }, [loadData]);
+
+  const handleSaveRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = roleEmail.trim().toLowerCase();
+    if (!cleanEmail) return;
+    if (
+      user?.email &&
+      cleanEmail === user.email.trim().toLowerCase() &&
+      roleValue === 'staff'
+    ) {
+      const ok = await confirmAction({
+        title: 'تأكيد تغيير صلاحية حسابك الحالي',
+        message:
+          'أنت على وشك تحويل حسابك الحالي إلى «مدخل بيانات (Staff)»، مما سيخفي لوحة إدارة الصلاحيات وأزرار الحذف النهائي عنك. هل تريد المتابعة؟',
+        confirmLabel: 'نعم، تغيير الصلاحية',
+        tone: 'warning',
+      });
+      if (!ok) return;
+    }
+    setRoleSaving(true);
+    setErrorMsg(null);
+    try {
+      await erpDb.upsertUserRole(cleanEmail, roleValue, roleDisplayName);
+      setRoleEmail('');
+      setRoleDisplayName('');
+      setRoleValue('staff');
+      setFeedbackMsg(
+        `تم حفظ صلاحية ${cleanEmail} كـ «${roleValue === 'admin' ? 'مدير (Admin)' : 'مدخل بيانات (Staff)'}».`
+      );
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذّر حفظ الصلاحية');
+    } finally {
+      setRoleSaving(false);
+    }
+  };
+
+  const handleDeleteRole = async (email: string) => {
+    const ok = await confirmAction({
+      title: 'إزالة قيد الصلاحية',
+      message: `هل تريد إزالة قيد الصلاحية للمستخدم (${email})؟ سيعود المستخدم غير المدرج إلى الصلاحية الافتراضية.`,
+      confirmLabel: 'نعم، إزالة',
+      tone: 'warning',
+    });
+    if (!ok) return;
+    setRoleSaving(true);
+    setErrorMsg(null);
+    try {
+      await erpDb.deleteUserRole(email);
+      setFeedbackMsg(`تمت إزالة قيد الصلاحية للبريد ${email}.`);
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'تعذّر إزالة الصلاحية');
+    } finally {
+      setRoleSaving(false);
+    }
+  };
 
   const handleExportMonthExcel = async (month: string) => {
     setBusyMonth(month);
@@ -471,15 +550,17 @@ export const AuditTrailView: React.FC = () => {
                                 <FileJson className="w-3 h-3" />
                                 <span>JSON</span>
                               </button>
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={() => void handlePurgeMonth(m.month, m.rowCount)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[11px] font-bold cursor-pointer disabled:opacity-50"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                <span>تفريغ الشهر</span>
-                              </button>
+                              {userRole === 'admin' && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => void handlePurgeMonth(m.month, m.rowCount)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>تفريغ الشهر</span>
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -495,6 +576,148 @@ export const AuditTrailView: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* User Role Management Panel (Admin Only) */}
+      {userRole === 'admin' && (
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 sm:p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#F0EFEA]">
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-xl bg-[#F6EFE7] text-[#A67C52] flex items-center justify-center shrink-0">
+                <UserCog className="w-4 h-4" />
+              </span>
+              <div>
+                <h2 className="text-sm font-bold text-[#1A1A1E]">
+                  إدارة صلاحيات المستخدمين (مدير / مدخل بيانات)
+                </h2>
+                <p className="text-[11px] text-[#6E6C66]">
+                  حساب «مدخل البيانات (Staff)» يسجّل الطلبات والمشتريات والتصنيع والمصروفات، ويُخفى
+                  عنه الحذف النهائي وتغيير التسعير الجماعي وتفريغ السجلات.
+                </p>
+              </div>
+            </div>
+            <span className="text-[11px] font-semibold text-[#8E6742] bg-[#FBF8F4] border border-[#E6D5C3] px-2.5 py-1 rounded-full">
+              الحسابات غير المدرجة تُعامل افتراضياً كمدير (لا يوجد قفل مفاجئ)
+            </span>
+          </div>
+
+          {rolesMissingTable ? (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3.5 text-xs text-amber-900 leading-relaxed">
+              لتفعيل جدول صلاحيات المستخدمين وسداد الموردين والاستبدال/المرتجع الجزئي، نفّذ ملف
+              التحديث{' '}
+              <code className="font-mono bg-amber-100 px-1.5 py-0.5 rounded font-bold">
+                supabase/migrations/019_workflow_automation_and_roles.sql
+              </code>{' '}
+              مرة واحدة في <strong>Supabase SQL Editor</strong> ثم اضغط «تحديث».
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <form
+                onSubmit={(e) => void handleSaveRole(e)}
+                className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl p-3"
+              >
+                <input
+                  type="email"
+                  required
+                  dir="ltr"
+                  value={roleEmail}
+                  onChange={(e) => setRoleEmail(e.target.value)}
+                  placeholder="staff@dresscode-clothing.com"
+                  className="sm:col-span-4 rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs text-left focus:outline-none focus:border-[#A67C52]"
+                />
+                <input
+                  type="text"
+                  value={roleDisplayName}
+                  onChange={(e) => setRoleDisplayName(e.target.value)}
+                  placeholder="الاسم (اختياري — مثال: سارة / المبيعات)"
+                  className="sm:col-span-3 rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs focus:outline-none focus:border-[#A67C52]"
+                />
+                <select
+                  value={roleValue}
+                  onChange={(e) => setRoleValue(e.target.value as UserRole)}
+                  className="sm:col-span-3 rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+                >
+                  <option value="staff">مدخل بيانات (Staff — بدون حذف نهائي)</option>
+                  <option value="admin">مدير (Admin — كامل الصلاحيات)</option>
+                </select>
+                <button
+                  type="submit"
+                  disabled={roleSaving}
+                  className="sm:col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs font-bold py-2 px-3 cursor-pointer disabled:opacity-50"
+                >
+                  <UserPlus className="w-3.5 h-3.5 text-[#BD956D]" />
+                  <span>{roleSaving ? 'حفظ...' : 'حفظ الصلاحية'}</span>
+                </button>
+              </form>
+
+              {roles.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-[#EAE8E2]">
+                  <table className="w-full text-xs text-right">
+                    <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
+                      <tr>
+                        <th className="py-2.5 px-3">البريد الإلكتروني</th>
+                        <th className="py-2.5 px-3">الاسم</th>
+                        <th className="py-2.5 px-3">الصلاحية</th>
+                        <th className="py-2.5 px-3">إجراء</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F0EFEA]">
+                      {roles.map((r) => (
+                        <tr key={r.email} className="hover:bg-[#FAF9F7]">
+                          <td className="py-2.5 px-3 font-mono font-semibold text-[#1A1A1E]" dir="ltr">
+                            {r.email}
+                          </td>
+                          <td className="py-2.5 px-3 text-[#4B4A46]">{r.displayName || '—'}</td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                r.role === 'admin'
+                                  ? 'bg-[#1A1A1E] text-[#DFB88C]'
+                                  : 'bg-sky-50 text-sky-800 border border-sky-200'
+                              }`}
+                            >
+                              {r.role === 'admin' ? 'مدير (Admin)' : 'مدخل بيانات (Staff)'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={roleSaving}
+                                onClick={() => {
+                                  setRoleEmail(r.email);
+                                  setRoleDisplayName(r.displayName || '');
+                                  setRoleValue(r.role === 'admin' ? 'staff' : 'admin');
+                                }}
+                                className="px-2 py-1 rounded-lg bg-[#F6EFE7] hover:bg-[#EDE0D1] text-[#8E6742] text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                              >
+                                تبديل لـ {r.role === 'admin' ? 'Staff' : 'Admin'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={roleSaving}
+                                onClick={() => void handleDeleteRole(r.email)}
+                                aria-label="إزالة الصلاحية"
+                                className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer disabled:opacity-50"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-xl bg-[#FAF9F7] border border-[#EAE8E2] px-4 py-3 text-xs text-[#6E6C66]">
+                  لم يتم تقييد أي بريد إلكتروني بصلاحية «مدخل بيانات» بعد. لإضافة موظف بصلاحية
+                  محدودة، أدخل بريده المسجل في Supabase أعلاه واختر «مدخل بيانات (Staff)».
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

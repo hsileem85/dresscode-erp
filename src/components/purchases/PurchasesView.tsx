@@ -1,7 +1,19 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, PackagePlus, Plus, ShoppingBag, Trash2, Truck, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  Banknote,
+  CheckCircle2,
+  PackagePlus,
+  Plus,
+  ShoppingBag,
+  Trash2,
+  Truck,
+  XCircle,
+} from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
+import { getLookupLabels } from '../../data/defaultLookups';
 import { CURRENCIES } from '../../types/erp';
+import type { PurchaseOrder } from '../../types/erp';
 import {
   blockNonIntegerKey,
   FABRIC_UNIT_LABELS,
@@ -20,19 +32,110 @@ interface DraftLine {
 }
 
 export const PurchasesView: React.FC = () => {
-  const { state, createAndReceivePO, receivePO, cancelPO, deletePO } = useERP();
-  const [modalOpen, setModalOpen] = useState(false);
-  const [supplierName, setSupplierName] = useState('');
-  const [supplierId, setSupplierId] = useState<string>('');
-  const [receiveImmediately, setReceiveImmediately] = useState(true);
+  const {
+    state,
+    userRole,
+    pendingPoDraft,
+    clearPendingPoDraft,
+    createAndReceivePO,
+    receivePO,
+    recordSupplierPayment,
+    cancelPO,
+    deletePO,
+  } = useERP();
+
+  const [modalOpen, setModalOpen] = useState<boolean>(() => Boolean(pendingPoDraft));
+  const [draftSourceLabel, setDraftSourceLabel] = useState<string>(
+    () => pendingPoDraft?.sourceLabel || ''
+  );
+  const [supplierName, setSupplierName] = useState<string>(
+    () => pendingPoDraft?.supplierName || ''
+  );
+  const [supplierId, setSupplierId] = useState<string>(() => pendingPoDraft?.supplierId || '');
+  const [receiveImmediately, setReceiveImmediately] = useState<boolean>(
+    () => (pendingPoDraft ? false : true)
+  );
   const [shippingCost, setShippingCost] = useState<number>(0);
   const [shippingAllocationMode, setShippingAllocationMode] = useState<
     'fabric_qty' | 'all_value'
   >('fabric_qty');
-  const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<DraftLine[]>([]);
+  const [notes, setNotes] = useState<string>(() => pendingPoDraft?.notes || '');
+  const [lines, setLines] = useState<DraftLine[]>(() =>
+    pendingPoDraft?.lines?.length ? pendingPoDraft.lines : []
+  );
   const [submitting, setSubmitting] = useState(false);
   const [busyPoId, setBusyPoId] = useState<string | null>(null);
+
+  // Supplier Payment Modal state
+  const [payPo, setPayPo] = useState<PurchaseOrder | null>(null);
+  const [payAmount, setPayAmount] = useState<number>(0);
+  const [payMethod, setPayMethod] = useState<string>('كاش');
+  const [payNotes, setPayNotes] = useState<string>('');
+  const [paying, setPaying] = useState(false);
+
+  const paymentMethods = useMemo(
+    () => getLookupLabels(state.lookups, 'payment_methods'),
+    [state.lookups]
+  );
+
+  // Detect duplicate items in the same PO
+  const duplicateLineKeys = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const l of lines) {
+      const k = `${l.itemType}:${l.refId}`;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const dups = new Set<string>();
+    for (const [k, c] of counts.entries()) {
+      if (c > 1) dups.add(k);
+    }
+    return dups;
+  }, [lines]);
+
+  const mergeDuplicateLines = () => {
+    const merged: DraftLine[] = [];
+    const indexByKey = new Map<string, number>();
+    for (const l of lines) {
+      const k = `${l.itemType}:${l.refId}`;
+      const existingIdx = indexByKey.get(k);
+      if (existingIdx !== undefined) {
+        merged[existingIdx] = {
+          ...merged[existingIdx],
+          quantity: toWholeQty(merged[existingIdx].quantity, 0) + toWholeQty(l.quantity, 0),
+        };
+      } else {
+        indexByKey.set(k, merged.length);
+        merged.push({ ...l, quantity: toWholeQty(l.quantity, 1) });
+      }
+    }
+    setLines(merged);
+  };
+
+  const openPayModal = (po: PurchaseOrder) => {
+    const rem = Math.max(0, Math.round(((po.totalAmount || 0) - (po.paidAmount || 0)) * 100) / 100);
+    setPayPo(po);
+    setPayAmount(rem);
+    setPayMethod(paymentMethods[0] || 'كاش');
+    setPayNotes('');
+  };
+
+  const handlePaySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payPo || paying) return;
+    const rem = Math.max(
+      0,
+      Math.round(((payPo.totalAmount || 0) - (payPo.paidAmount || 0)) * 100) / 100
+    );
+    const safeAmt = Math.min(rem, Math.max(0, Math.round((Number(payAmount) || 0) * 100) / 100));
+    if (safeAmt <= 0) return;
+    setPaying(true);
+    try {
+      await recordSupplierPayment(payPo.id, safeAmt, payMethod, payNotes);
+      setPayPo(null);
+    } finally {
+      setPaying(false);
+    }
+  };
 
   const runPoAction = async (poId: string, action: () => Promise<void>) => {
     setBusyPoId(poId);
@@ -43,7 +146,15 @@ export const PurchasesView: React.FC = () => {
     }
   };
 
+  const closeCreateModal = () => {
+    setModalOpen(false);
+    setDraftSourceLabel('');
+    if (pendingPoDraft) clearPendingPoDraft();
+  };
+
   const openModal = () => {
+    if (pendingPoDraft) clearPendingPoDraft();
+    setDraftSourceLabel('');
     const firstSup = state.suppliers[0];
     setSupplierId(firstSup?.id || '');
     setSupplierName(firstSup?.name || 'مورد عام');
@@ -226,7 +337,7 @@ export const PurchasesView: React.FC = () => {
         notes,
         items,
       });
-      setModalOpen(false);
+      closeCreateModal();
     } finally {
       setSubmitting(false);
     }
@@ -380,6 +491,15 @@ export const PurchasesView: React.FC = () => {
                         شامل شحن {formatMoney(po.shippingCost || 0, state.currency)}
                       </div>
                     )}
+                    {!isCancelled && (po.paidAmount || 0) > 0 && (
+                      <div className="text-[10px] font-semibold text-emerald-700 tabular-nums">
+                        مدفوع: {formatMoney(po.paidAmount || 0, state.currency)} • متبقي:{' '}
+                        {formatMoney(
+                          Math.max(0, (po.totalAmount || 0) - (po.paidAmount || 0)),
+                          state.currency
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {!isCancelled && !isReceived && (
@@ -393,6 +513,17 @@ export const PurchasesView: React.FC = () => {
                         استلام بالمخزن
                       </button>
                     )}
+                    {!isCancelled && (po.totalAmount || 0) - (po.paidAmount || 0) > 0.01 && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => openPayModal(po)}
+                        className="inline-flex items-center gap-1 text-xs font-bold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                      >
+                        <Banknote className="w-3.5 h-3.5" />
+                        سداد للمورد
+                      </button>
+                    )}
                     {!isCancelled && (
                       <button
                         type="button"
@@ -404,15 +535,17 @@ export const PurchasesView: React.FC = () => {
                         إلغاء
                       </button>
                     )}
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void runPoAction(po.id, () => deletePO(po.id))}
-                      className="inline-flex items-center gap-1 text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      حذف
-                    </button>
+                    {userRole === 'admin' && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runPoAction(po.id, () => deletePO(po.id))}
+                        className="inline-flex items-center gap-1 text-xs font-bold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        حذف
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -433,7 +566,7 @@ export const PurchasesView: React.FC = () => {
                 <th className="py-3 px-4">المورد</th>
                 <th className="py-3 px-4">التاريخ</th>
                 <th className="py-3 px-4">الأصناف</th>
-                <th className="py-3 px-4">الإجمالي</th>
+                <th className="py-3 px-4">الإجمالي / السداد</th>
                 <th className="py-3 px-4">الحالة</th>
                 <th className="py-3 px-4">إجراء</th>
               </tr>
@@ -443,6 +576,7 @@ export const PurchasesView: React.FC = () => {
                 const isCancelled = po.status === 'cancelled';
                 const isReceived = po.status === 'received';
                 const isBusy = busyPoId === po.id;
+                const remaining = Math.max(0, (po.totalAmount || 0) - (po.paidAmount || 0));
                 return (
                   <tr
                     key={po.id}
@@ -479,6 +613,22 @@ export const PurchasesView: React.FC = () => {
                           شامل شحن {formatMoney(po.shippingCost || 0, state.currency)}
                         </div>
                       )}
+                      {!isCancelled && (
+                        <div className="text-[10px] font-semibold mt-0.5">
+                          {remaining <= 0.01 ? (
+                            <span className="text-emerald-700">مسدد بالكامل ✓</span>
+                          ) : (po.paidAmount || 0) > 0 ? (
+                            <span className="text-[#4B4A46]">
+                              مدفوع {formatMoney(po.paidAmount, state.currency)} • متبقي{' '}
+                              <span className="text-red-700">
+                                {formatMoney(remaining, state.currency)}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-[#6E6C66]">غير مسدد بعد</span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <span
@@ -498,7 +648,7 @@ export const PurchasesView: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         {!isCancelled && !isReceived && (
                           <button
                             type="button"
@@ -508,6 +658,18 @@ export const PurchasesView: React.FC = () => {
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
                             استلام بالمخزن
+                          </button>
+                        )}
+                        {!isCancelled && remaining > 0.01 && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => openPayModal(po)}
+                            title="سداد دفعة للمورد وخصمها من الخزنة ورصيد المورد تلقائياً"
+                            className="inline-flex items-center gap-1 text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <Banknote className="w-3.5 h-3.5" />
+                            سداد
                           </button>
                         )}
                         {!isCancelled && (
@@ -521,16 +683,18 @@ export const PurchasesView: React.FC = () => {
                             إلغاء
                           </button>
                         )}
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => void runPoAction(po.id, () => deletePO(po.id))}
-                          title="حذف أمر الشراء نهائياً"
-                          className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          حذف
-                        </button>
+                        {userRole === 'admin' && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runPoAction(po.id, () => deletePO(po.id))}
+                            title="حذف أمر الشراء نهائياً"
+                            className="inline-flex items-center gap-1 text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            حذف
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -551,12 +715,25 @@ export const PurchasesView: React.FC = () => {
       {/* Create PO Modal */}
       <Modal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={closeCreateModal}
         title="إنشاء أمر شراء خامات / كلف"
         subtitle="عند الاستلام يتم زيادة رصيد المخزون وإعادة حساب متوسط التكلفة المرجّح تلقائياً في PostgreSQL"
         maxWidthClass="max-w-3xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+          {draftSourceLabel && (
+            <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] px-3.5 py-2.5 text-xs text-[#7B5836] flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-[#A67C52] shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold">مسودة شراء اختيارية: {draftSourceLabel}</div>
+                <div className="text-[11px] text-[#6E6C66] mt-0.5">
+                  يمكنك تعديل الكميات والأسعار أو حذف أي صنف غير متوفر أو إغلاق النافذة لتجاهل
+                  المسودة بالكامل.
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1">المورد</label>
@@ -609,6 +786,22 @@ export const PurchasesView: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {duplicateLineKeys.size > 0 && (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                  <span>تنبيه: يوجد صنف مكرر أكثر من مرة في نفس الفاتورة!</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={mergeDuplicateLines}
+                  className="px-2.5 py-1 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[11px] font-bold cursor-pointer"
+                >
+                  دمج السطور المكررة تلقائياً
+                </button>
+              </div>
+            )}
 
             {lines.map((line, idx) => {
               const currencySymbol = CURRENCIES[state.currency]?.symbol || 'ج.م';
@@ -912,6 +1105,115 @@ export const PurchasesView: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Supplier Payment Modal (سداد دفعة للمورد المرتبط بالخزنة) */}
+      <Modal
+        open={Boolean(payPo)}
+        onClose={() => setPayPo(null)}
+        title={`سداد دفعة للمورد — ${payPo?.supplierName || ''}`}
+        subtitle={`أمر الشراء ${payPo?.poNumber || ''} • يتم خصم المبلغ من الخزنة ورصيد المورد تلقائياً`}
+        maxWidthClass="max-w-md"
+      >
+        {payPo && (
+          <form onSubmit={handlePaySubmit} className="space-y-4">
+            {(() => {
+              const rem = Math.max(
+                0,
+                Math.round(((payPo.totalAmount || 0) - (payPo.paidAmount || 0)) * 100) / 100
+              );
+              const isOver = payAmount > rem + 0.01;
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-2 rounded-xl bg-[#FAF9F7] border border-[#EAE8E2] p-3 text-center text-xs">
+                    <div>
+                      <div className="text-[10px] text-[#6E6C66]">إجمالي الفاتورة</div>
+                      <div className="font-bold text-[#1A1A1E] tabular-nums mt-0.5">
+                        {formatMoney(payPo.totalAmount, state.currency)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-[#6E6C66]">المدفوع سابقاً</div>
+                      <div className="font-bold text-emerald-700 tabular-nums mt-0.5">
+                        {formatMoney(payPo.paidAmount || 0, state.currency)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-[#6E6C66]">المتبقي</div>
+                      <div className="font-extrabold text-red-700 tabular-nums mt-0.5">
+                        {formatMoney(rem, state.currency)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">قيمة الدفعة *</label>
+                      <input
+                        type="number"
+                        min="0.01"
+                        max={rem}
+                        step="0.01"
+                        required
+                        value={payAmount || ''}
+                        onChange={(e) => setPayAmount(Math.max(0, Number(e.target.value) || 0))}
+                        className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-sm font-bold tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">طريقة الدفع</label>
+                      <select
+                        value={payMethod}
+                        onChange={(e) => setPayMethod(e.target.value)}
+                        className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-semibold"
+                      >
+                        {paymentMethods.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {isOver && (
+                    <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] font-bold text-red-700">
+                      تنبيه: لا يمكن سداد مبلغ أكبر من المتبقي المستحق ({formatMoney(rem, state.currency)}).
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">ملاحظات (اختياري)</label>
+                    <input
+                      type="text"
+                      value={payNotes}
+                      onChange={(e) => setPayNotes(e.target.value)}
+                      placeholder="مثال: تحويل إنستاباي / دفعة نقدية..."
+                      className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+                    <button
+                      type="button"
+                      onClick={() => setPayPo(null)}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer"
+                    >
+                      إلغاء
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={paying || payAmount <= 0 || isOver}
+                      className="px-5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {paying ? 'جاري التسجيل...' : 'تأكيد السداد وتحديث الخزنة'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </form>
+        )}
       </Modal>
     </div>
   );

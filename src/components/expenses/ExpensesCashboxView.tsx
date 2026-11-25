@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Banknote,
   Boxes,
   Landmark,
@@ -23,6 +24,7 @@ import { Modal } from '../common/Modal';
 export const ExpensesCashboxView: React.FC = () => {
   const {
     state,
+    userRole,
     saveExpense,
     deleteExpense,
     savePartnerContribution,
@@ -460,14 +462,16 @@ export const ExpensesCashboxView: React.FC = () => {
                     <span className="text-xs font-bold tabular-nums text-[#8E6742]">
                       {formatMoney(p.amount, state.currency)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => deletePartnerContribution(p.id)}
-                      aria-label="حذف"
-                      className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {userRole === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => deletePartnerContribution(p.id)}
+                        aria-label="حذف"
+                        className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -482,7 +486,7 @@ export const ExpensesCashboxView: React.FC = () => {
                     <th className="py-2 px-3">التاريخ</th>
                     <th className="py-2 px-3">المبلغ</th>
                     <th className="py-2 px-3">ملاحظات</th>
-                    <th className="py-2 px-3">حذف</th>
+                    {userRole === 'admin' && <th className="py-2 px-3">حذف</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#F0EFEA]">
@@ -496,15 +500,17 @@ export const ExpensesCashboxView: React.FC = () => {
                         {formatMoney(p.amount, state.currency)}
                       </td>
                       <td className="py-2 px-3 text-[#6E6C66]">{p.notes || '—'}</td>
-                      <td className="py-2 px-3">
-                        <button
-                          type="button"
-                          onClick={() => deletePartnerContribution(p.id)}
-                          className="text-[#9C9990] hover:text-red-600 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
+                      {userRole === 'admin' && (
+                        <td className="py-2 px-3">
+                          <button
+                            type="button"
+                            onClick={() => deletePartnerContribution(p.id)}
+                            className="text-[#9C9990] hover:text-red-600 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -586,14 +592,16 @@ export const ExpensesCashboxView: React.FC = () => {
                   <span className="text-sm font-extrabold tabular-nums text-[#1A1A1E]">
                     {formatMoney(e.amount, state.currency)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => deleteExpense(e.id)}
-                    aria-label="حذف"
-                    className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {userRole === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => deleteExpense(e.id)}
+                      aria-label="حذف"
+                      className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="text-[11px]">
@@ -625,7 +633,7 @@ export const ExpensesCashboxView: React.FC = () => {
                 <th className="py-3 px-4">التصنيف المحاسبي</th>
                 <th className="py-3 px-4">طريقة الدفع</th>
                 <th className="py-3 px-4">المبلغ</th>
-                <th className="py-3 px-4">حذف</th>
+                {userRole === 'admin' && <th className="py-3 px-4">حذف</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F0EFEA]">
@@ -653,15 +661,17 @@ export const ExpensesCashboxView: React.FC = () => {
                   <td className="py-3 px-4 font-bold tabular-nums">
                     {formatMoney(e.amount, state.currency)}
                   </td>
-                  <td className="py-3 px-4">
-                    <button
-                      type="button"
-                      onClick={() => deleteExpense(e.id)}
-                      className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
+                  {userRole === 'admin' && (
+                    <td className="py-3 px-4">
+                      <button
+                        type="button"
+                        onClick={() => deleteExpense(e.id)}
+                        className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {filteredExpenses.length === 0 && (
@@ -759,6 +769,21 @@ export const ExpensesCashboxView: React.FC = () => {
             />
             <span>هذا البند شراء خامات / تشغيل تصنيع (يُخصم من الخزنة فقط ولا يُكرر كمصروف تشغيلي في P&L)</span>
           </label>
+
+          {expAmount > 0 && expAmount > availableCash && (
+            <div className="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-900 font-semibold">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+              <span>
+                تنبيه سيولة: مبلغ المصروف ({formatMoney(expAmount, state.currency)}) أكبر من
+                الرصيد المتاح حالياً بالخزنة ({formatMoney(availableCash, state.currency)}). سيصبح
+                رصيد الخزنة بعد الحفظ{' '}
+                <strong className="tabular-nums text-red-700" dir="ltr">
+                  {formatMoney(availableCash - expAmount, state.currency)}
+                </strong>
+                . يمكنك المتابعة إذا كان الصرف من عهدة أو تمويل شخصي.
+              </span>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
             <button

@@ -3,8 +3,8 @@ import {
   LayoutDashboard,
   Menu,
   Receipt,
-  Scissors,
   Wallet,
+  Workflow,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import type { NavTab } from '../../types/erp';
@@ -19,7 +19,7 @@ const QUICK_TABS: {
   icon: React.FC<{ className?: string }>;
 }[] = [
   { id: 'dashboard', label: 'الرئيسية', icon: LayoutDashboard },
-  { id: 'models', label: 'الموديلات', icon: Scissors },
+  { id: 'workflow', label: 'المسارات', icon: Workflow },
   { id: 'sales', label: 'الطلبات', icon: Receipt },
   { id: 'expenses', label: 'الخزنة', icon: Wallet },
 ];

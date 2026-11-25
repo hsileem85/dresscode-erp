@@ -35,6 +35,7 @@ const ALL_MODELS_VALUE = '__all__';
 export const CostCalculatorView: React.FC = () => {
   const {
     state,
+    userRole,
     selectedModelId,
     setSelectedModelId,
     setMonthlyVolume,
@@ -322,14 +323,16 @@ export const CostCalculatorView: React.FC = () => {
                     aria-label={`مبلغ ${item.name}`}
                     className="w-20 sm:w-24 rounded-lg border border-[#E5E3DD] bg-[#FAF9F7] px-2 py-1 text-xs font-bold text-left tabular-nums focus:outline-none focus:border-[#A67C52]"
                   />
-                  <button
-                    type="button"
-                    onClick={() => deleteOverheadItem(item.id)}
-                    aria-label="حذف البند"
-                    className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {userRole === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => deleteOverheadItem(item.id)}
+                      aria-label="حذف البند"
+                      className="p-1 text-[#9C9990] hover:text-red-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -538,38 +541,42 @@ export const CostCalculatorView: React.FC = () => {
               {state.models.length > 0 && (
                 <div className="pt-2.5 border-t border-[#E6D5C3]/70 flex flex-wrap items-center justify-between gap-2 no-print">
                   <span className="text-[11px] text-[#7B5836]">
-                    {allModelsSelected
-                      ? `وضع التسعير الجماعي نشط — سيُعتمد (${effectiveMarkupToSave}%) على كافة الموديلات`
-                      : 'يمكنك تطبيق هذه النسبة على كافة الموديلات دفعة واحدة:'}
+                    {userRole !== 'admin'
+                      ? 'تعديل نسبة التسعير الجماعية لجميع الموديلات دفعة واحدة متاح لصلاحية المدير فقط.'
+                      : allModelsSelected
+                        ? `وضع التسعير الجماعي نشط — سيُعتمد (${effectiveMarkupToSave}%) على كافة الموديلات`
+                        : 'يمكنك تطبيق هذه النسبة على كافة الموديلات دفعة واحدة:'}
                   </span>
-                  <button
-                    type="button"
-                    disabled={applyingAll}
-                    onClick={handleApplyToAllModels}
-                    className={`inline-flex items-center justify-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-60 ${
-                      appliedAllFeedback
-                        ? 'bg-[#3D6B59] text-white'
-                        : allModelsSelected
-                          ? 'bg-[#1A1A1E] hover:bg-[#2E2E35] text-white'
-                          : 'bg-[#A67C52] hover:bg-[#8E6742] text-white'
-                    }`}
-                  >
-                    {appliedAllFeedback ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>تم تطبيق {effectiveMarkupToSave}% على كل الموديلات</span>
-                      </>
-                    ) : (
-                      <>
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>
-                          {applyingAll
-                            ? 'جارٍ التطبيق...'
-                            : `تطبيق (${effectiveMarkupToSave}%) على كل الموديلات (${state.models.length})`}
-                        </span>
-                      </>
-                    )}
-                  </button>
+                  {userRole === 'admin' && (
+                    <button
+                      type="button"
+                      disabled={applyingAll}
+                      onClick={handleApplyToAllModels}
+                      className={`inline-flex items-center justify-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-60 ${
+                        appliedAllFeedback
+                          ? 'bg-[#3D6B59] text-white'
+                          : allModelsSelected
+                            ? 'bg-[#1A1A1E] hover:bg-[#2E2E35] text-white'
+                            : 'bg-[#A67C52] hover:bg-[#8E6742] text-white'
+                      }`}
+                    >
+                      {appliedAllFeedback ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>تم تطبيق {effectiveMarkupToSave}% على كل الموديلات</span>
+                        </>
+                      ) : (
+                        <>
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>
+                            {applyingAll
+                              ? 'جارٍ التطبيق...'
+                              : `تطبيق (${effectiveMarkupToSave}%) على كل الموديلات (${state.models.length})`}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

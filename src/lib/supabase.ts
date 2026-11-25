@@ -19,9 +19,12 @@ import type {
   ProductModel,
   ProductionOrder,
   PurchaseOrder,
+  SalesExchangeReturnPayload,
   SalesOrder,
   Supplier,
   TrimAccessory,
+  UserRole,
+  UserRoleRecord,
   Workshop,
 } from '../types/erp';
 
@@ -2016,5 +2019,164 @@ export const erpDb = {
     });
     if (error) throw error;
     return Number(data) || 0;
+  },
+
+  async recordSupplierPayment(
+    poId: string,
+    amount: number,
+    paymentMethod = 'كاش',
+    notes = '',
+    fallbackPo?: PurchaseOrder
+  ): Promise<void> {
+    const safeAmt = Math.round((Number(amount) || 0) * 100) / 100;
+    if (safeAmt <= 0) throw new Error('يجب أن يكون مبلغ الدفعة للمورد أكبر من صفر');
+
+    const { error } = await db().rpc('record_supplier_payment', {
+      p_po_id: poId,
+      p_amount: safeAmt,
+      p_payment_method: paymentMethod || 'كاش',
+      p_notes: notes.trim() || null,
+    });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('record_supplier_payment');
+    if (!missingFn) throw error;
+
+    // Seamless fallback when migration 019 has not been executed yet
+    const client = db();
+    const { data: poRow, error: poReadErr } = await client
+      .from('purchase_orders')
+      .select('id, po_number, supplier_id, supplier_name, total_amount, paid_amount')
+      .eq('id', poId)
+      .single();
+    if (poReadErr) throw poReadErr;
+
+    const total = Number(poRow?.total_amount ?? fallbackPo?.totalAmount ?? 0);
+    const paid = Number(poRow?.paid_amount ?? fallbackPo?.paidAmount ?? 0);
+    const remaining = Math.max(0, total - paid);
+    if (safeAmt > remaining + 0.01) {
+      throw new Error(`مبلغ الدفعة (${safeAmt}) أكبر من المتبقي المستحق (${remaining.toFixed(2)})`);
+    }
+
+    const { error: poUpdErr } = await client
+      .from('purchase_orders')
+      .update({ paid_amount: Math.round((paid + safeAmt) * 100) / 100 })
+      .eq('id', poId);
+    if (poUpdErr) throw poUpdErr;
+
+    const supId = poRow?.supplier_id ?? fallbackPo?.supplierId ?? null;
+    if (supId) {
+      const { data: supRow } = await client
+        .from('suppliers')
+        .select('balance_payable')
+        .eq('id', supId)
+        .single();
+      const curBal = Number(supRow?.balance_payable) || 0;
+      await client
+        .from('suppliers')
+        .update({ balance_payable: Math.max(0, Math.round((curBal - safeAmt) * 100) / 100) })
+        .eq('id', supId);
+    }
+
+    const title = `دفعة لمورد (${poRow?.supplier_name || fallbackPo?.supplierName || 'مورد'}) — أمر شراء ${
+      poRow?.po_number || fallbackPo?.poNumber || ''
+    }`;
+    await client.from('expenses').insert({
+      id: newUuid(),
+      expense_date: new Date().toISOString().slice(0, 10),
+      title,
+      category: 'خامات',
+      is_raw_material_purchase: true,
+      amount: safeAmt,
+      payment_method: paymentMethod || 'كاش',
+      notes: notes.trim() || `سداد تلقائي من المشتريات`,
+    });
+
+    await client.from('financial_transactions').insert({
+      tx_type: 'expense',
+      category: 'supplier_payment',
+      amount: safeAmt,
+      reference_type: 'purchase_order',
+      reference_id: poId,
+      description: title,
+    });
+  },
+
+  async processSalesExchangeReturn(payload: SalesExchangeReturnPayload): Promise<void> {
+    const { error } = await db().rpc('process_sales_exchange_return', {
+      p_sale_id: payload.saleId,
+      p_return_variant_id: payload.returnVariantId,
+      p_return_qty: Math.max(1, Math.trunc(payload.returnQty)),
+      p_replacement_variant_id: payload.replacementVariantId || null,
+      p_replacement_qty: payload.replacementVariantId
+        ? Math.max(1, Math.trunc(payload.replacementQty || payload.returnQty))
+        : 0,
+      p_price_diff: Number(payload.priceDiff) || 0,
+      p_notes: payload.notes?.trim() || null,
+    });
+    if (!error) return;
+
+    const missingFn =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      error.message?.includes('process_sales_exchange_return');
+    if (!missingFn) throw error;
+
+    throw new Error(
+      'لتنفيذ استبدال المقاسات والمرتجع الجزئي بأمان على السحابة، يرجى تشغيل ملف التحديث 019_workflow_automation_and_roles.sql في Supabase SQL Editor أولاً.'
+    );
+  },
+
+  async getMyUserRole(): Promise<UserRole> {
+    const { data, error } = await db().rpc('get_my_user_role');
+    if (error) return 'admin';
+    return data === 'staff' ? 'staff' : 'admin';
+  },
+
+  async fetchUserRoles(): Promise<{ rows: UserRoleRecord[]; missingTable: boolean }> {
+    const { data, error } = await db()
+      .from('user_roles')
+      .select('*')
+      .order('updated_at', { ascending: false });
+    if (error) {
+      const missing =
+        error.code === '42P01' ||
+        error.code === 'PGRST205' ||
+        error.message?.includes('user_roles');
+      if (missing) return { rows: [], missingTable: true };
+      throw error;
+    }
+    return {
+      missingTable: false,
+      rows: (data || []).map((r) => ({
+        email: String(r.email || ''),
+        role: r.role === 'staff' ? 'staff' : 'admin',
+        displayName: r.display_name || '',
+        updatedAt: r.updated_at || '',
+      })),
+    };
+  },
+
+  async upsertUserRole(email: string, role: UserRole, displayName = ''): Promise<void> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) throw new Error('البريد الإلكتروني مطلوب');
+    const { error } = await db().from('user_roles').upsert(
+      {
+        email: cleanEmail,
+        role,
+        display_name: displayName.trim() || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'email' }
+    );
+    if (error) throw error;
+  },
+
+  async deleteUserRole(email: string): Promise<void> {
+    const { error } = await db().from('user_roles').delete().eq('email', email.trim().toLowerCase());
+    if (error) throw error;
   },
 };
