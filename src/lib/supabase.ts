@@ -27,6 +27,7 @@ import type {
   UserRoleRecord,
   Workshop,
 } from '../types/erp';
+import { matchesSmartQuery } from '../utils/search';
 
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
 const supabaseKey = (
@@ -2051,29 +2052,42 @@ export const erpDb = {
     tableName?: string;
     action?: AuditAction | '';
     actorEmail?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    fieldFocus?: '' | 'stock' | 'money';
+    fieldLabels?: Record<string, string>;
     search?: string;
     limit?: number;
     offset?: number;
-  }): Promise<{ rows: AuditLogEntry[]; totalCount: number; missingMigration: boolean }> {
+  }): Promise<{
+    rows: AuditLogEntry[];
+    totalCount: number;
+    missingMigration: boolean;
+    detailMatchedIds: number[];
+  }> {
     const client = db();
     const limit = filters?.limit ?? 100;
     const offset = filters?.offset ?? 0;
+    const searchStr = (filters?.search || '').trim();
+    const fieldFocus = filters?.fieldFocus || '';
+    const needsSmartScan = Boolean(searchStr) || Boolean(fieldFocus);
 
     let query = client
       .from('audit_logs')
       .select('*', { count: 'exact' })
-      .order('occurred_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .order('occurred_at', { ascending: false });
 
     if (filters?.month) query = query.eq('log_month', filters.month);
     if (filters?.tableName) query = query.eq('table_name', filters.tableName);
     if (filters?.action) query = query.eq('action', filters.action);
     if (filters?.actorEmail) query = query.eq('actor_email', filters.actorEmail);
-    if (filters?.search?.trim()) {
-      const q = filters.search.trim().replace(/,/g, ' ');
-      query = query.or(
-        `record_summary.ilike.%${q}%,actor_email.ilike.%${q}%,actor_name.ilike.%${q}%,entity_label.ilike.%${q}%`
-      );
+    if (filters?.dateFrom) query = query.gte('occurred_at', `${filters.dateFrom}T00:00:00`);
+    if (filters?.dateTo) query = query.lte('occurred_at', `${filters.dateTo}T23:59:59.999`);
+
+    if (needsSmartScan) {
+      query = query.range(0, 999);
+    } else {
+      query = query.range(offset, offset + limit - 1);
     }
 
     const { data, error, count } = await query;
@@ -2083,12 +2097,12 @@ export const erpDb = {
         error.code === 'PGRST205' ||
         error.message?.includes('audit_logs');
       if (missing) {
-        return { rows: [], totalCount: 0, missingMigration: true };
+        return { rows: [], totalCount: 0, missingMigration: true, detailMatchedIds: [] };
       }
       throw error;
     }
 
-    const rows: AuditLogEntry[] = (data || []).map((r) => ({
+    const mapped: AuditLogEntry[] = (data || []).map((r) => ({
       id: Number(r.id),
       occurredAt: r.occurred_at,
       logMonth: r.log_month,
@@ -2103,7 +2117,120 @@ export const erpDb = {
       changedFields: (r.changed_fields as Record<string, unknown> | null) ?? null,
     }));
 
-    return { rows, totalCount: count ?? rows.length, missingMigration: false };
+    if (!needsSmartScan) {
+      return {
+        rows: mapped,
+        totalCount: count ?? mapped.length,
+        missingMigration: false,
+        detailMatchedIds: [],
+      };
+    }
+
+    const STOCK_KEYS = new Set([
+      'stock_qty',
+      'finished_goods_qty',
+      'planned_qty',
+      'completed_qty',
+      'quantity',
+    ]);
+    const MONEY_KEYS = new Set([
+      'price_per_unit',
+      'pack_price',
+      'total_amount',
+      'paid_amount',
+      'remaining_debt',
+      'discount_amount',
+      'shipping_fee',
+      'shipping_cost',
+      'target_margin_pct',
+      'actual_retail_price',
+      'retail_price',
+      'unit_cogs',
+      'amount',
+      'agreed_labor_total',
+      'paid_to_workshop',
+      'balance_payable',
+      'labor_cost',
+    ]);
+    const ACTION_AR: Record<AuditAction, string> = {
+      INSERT: 'إضافة جديد انشاء insert',
+      UPDATE: 'تعديل تحديث تغيير update',
+      DELETE: 'حذف الغاء مسح delete',
+    };
+    const fieldLabels = filters?.fieldLabels || {};
+    const detailMatchedIds: number[] = [];
+
+    const filtered = mapped.filter((entry) => {
+      const cfKeys = entry.changedFields ? Object.keys(entry.changedFields) : [];
+
+      if (fieldFocus === 'stock') {
+        const hasStockKey = cfKeys.some((k) => STOCK_KEYS.has(k));
+        if (!hasStockKey) return false;
+      } else if (fieldFocus === 'money') {
+        const hasMoneyKey = cfKeys.some((k) => MONEY_KEYS.has(k));
+        if (!hasMoneyKey) return false;
+      }
+
+      if (!searchStr) return true;
+
+      const headerHaystacks = [
+        entry.recordSummary,
+        entry.entityLabel,
+        entry.tableName,
+        entry.actorName,
+        formatDisplayIdentifier(entry.actorEmail),
+        entry.actorEmail,
+        entry.recordId,
+        ACTION_AR[entry.action] || entry.action,
+        entry.logMonth,
+      ];
+
+      if (matchesSmartQuery(searchStr, headerHaystacks)) {
+        return true;
+      }
+
+      if (entry.changedFields) {
+        const detailsParts: string[] = [];
+        for (const [k, v] of Object.entries(entry.changedFields)) {
+          detailsParts.push(k);
+          if (fieldLabels[k]) detailsParts.push(fieldLabels[k]);
+          if (v !== null && v !== undefined) {
+            detailsParts.push(typeof v === 'object' ? JSON.stringify(v) : String(v));
+          }
+        }
+        if (matchesSmartQuery(searchStr, [...headerHaystacks, ...detailsParts])) {
+          detailMatchedIds.push(entry.id);
+          return true;
+        }
+      }
+
+      return false;
+    });
+
+    const pageRows = filtered.slice(offset, offset + limit);
+    return {
+      rows: pageRows,
+      totalCount: filtered.length,
+      missingMigration: false,
+      detailMatchedIds,
+    };
+  },
+
+  async fetchAuditActors(): Promise<{ email: string; name: string }[]> {
+    const client = db();
+    const { data, error } = await client
+      .from('audit_logs')
+      .select('actor_email, actor_name')
+      .order('occurred_at', { ascending: false })
+      .limit(500);
+    if (error || !data) return [];
+    const seen = new Map<string, string>();
+    for (const r of data) {
+      const email = String(r.actor_email || '').trim();
+      if (!email || seen.has(email)) continue;
+      seen.set(email, String(r.actor_name || formatDisplayIdentifier(email) || email));
+    }
+    return Array.from(seen.entries()).map(([email, name]) => ({ email, name }));
   },
 
   async fetchAllAuditLogsForMonth(month: string): Promise<AuditLogEntry[]> {

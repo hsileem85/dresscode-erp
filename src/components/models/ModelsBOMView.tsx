@@ -9,14 +9,17 @@ import {
   Plus,
   Save,
   Scissors,
+  Search,
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
 import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
 import { useConfirm } from '../common/ConfirmDialog';
+import { ModelSmartSelect } from '../common/ModelSmartSelect';
 import type {
   ModelFabricItem,
   ModelLaborItem,
@@ -37,6 +40,7 @@ import {
   getTrimUnitCost,
   toWholeQty,
 } from '../../utils/calculations';
+import { matchesSmartQuery } from '../../utils/search';
 
 const STATUS_LABELS: Record<ModelStatus, string> = {
   active: 'إنتاج نشط',
@@ -83,6 +87,22 @@ export const ModelsBOMView: React.FC = () => {
 
   const [draft, setDraft] = useState<ProductModel | null>(activeModel);
   const [savedToast, setSavedToast] = useState(false);
+  const [modelListQuery, setModelListQuery] = useState('');
+
+  const filteredModels = useMemo(() => {
+    if (!modelListQuery.trim()) return state.models;
+    return state.models.filter((m) => {
+      const variantText = m.variants.map((v) => `${v.color} ${v.size} ${v.variantSku}`).join(' ');
+      return matchesSmartQuery(modelListQuery, [
+        m.name,
+        m.sku,
+        m.category,
+        m.season,
+        m.notes,
+        variantText,
+      ]);
+    });
+  }, [state.models, modelListQuery]);
 
   useEffect(() => {
     setDraft(activeModel);
@@ -275,41 +295,60 @@ export const ModelsBOMView: React.FC = () => {
             <span>موديل جديد</span>
           </button>
         </div>
-        <select
+        <ModelSmartSelect
+          models={state.models}
           value={draft?.id || ''}
-          onChange={(e) => setSelectedModelId(e.target.value)}
-          className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2.5 text-sm font-bold text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
-        >
-          {state.models.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name} ({m.sku})
-            </option>
-          ))}
-        </select>
+          onChange={setSelectedModelId}
+          size="md"
+          showVariantCount
+        />
       </div>
 
       {/* Desktop Models Sidebar List */}
       <div className="hidden xl:block xl:col-span-4 bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="p-4 border-b border-[#E5E3DD] flex items-center justify-between gap-2 bg-[#FAF9F7]">
-          <div>
-            <h2 className="text-sm font-bold text-[#1A1A1E]">
-              قائمة الموديلات ({state.models.length})
-            </h2>
-            <p className="text-[11px] text-[#6E6C66]">اختر موديلاً لتعديل بطاقة التكلفة</p>
+        <div className="p-4 border-b border-[#E5E3DD] space-y-3 bg-[#FAF9F7]">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-bold text-[#1A1A1E]">
+                قائمة الموديلات ({filteredModels.length}
+                {modelListQuery.trim() ? ` / ${state.models.length}` : ''})
+              </h2>
+              <p className="text-[11px] text-[#6E6C66]">ابحث أو اختر موديلاً لتعديل بطاقة التكلفة</p>
+            </div>
+            <button
+              id="btn-new-model"
+              type="button"
+              onClick={handleCreateNew}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-semibold px-3 py-2 transition-colors cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>موديل جديد</span>
+            </button>
           </div>
-          <button
-            id="btn-new-model"
-            type="button"
-            onClick={handleCreateNew}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-[#A67C52] hover:bg-[#8E6742] text-white text-xs font-semibold px-3 py-2 transition-colors cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>موديل جديد</span>
-          </button>
+          <div className="relative flex items-center">
+            <Search className="w-3.5 h-3.5 text-[#A67C52] absolute right-3 pointer-events-none" />
+            <input
+              type="text"
+              value={modelListQuery}
+              onChange={(e) => setModelListQuery(e.target.value)}
+              placeholder="بحث ذكي بالاسم أو الكود SKU أو الفئة..."
+              className="w-full rounded-xl border border-[#E5E3DD] bg-white pr-8 pl-8 py-2 text-xs text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
+            />
+            {modelListQuery && (
+              <button
+                type="button"
+                onClick={() => setModelListQuery('')}
+                aria-label="مسح البحث"
+                className="absolute left-2.5 p-0.5 text-[#9C9990] hover:text-[#1A1A1E] cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="divide-y divide-[#F0EFEA] max-h-[650px] overflow-y-auto">
-          {state.models.map((m) => {
+          {filteredModels.map((m) => {
             const c = calculateModelCost(m, state.fabrics, state.trims, state.overhead);
             const isSelected = draft?.id === m.id;
             return (
@@ -363,9 +402,11 @@ export const ModelsBOMView: React.FC = () => {
               </div>
             );
           })}
-          {state.models.length === 0 && (
+          {filteredModels.length === 0 && (
             <div className="p-8 text-center text-xs text-[#6E6C66]">
-              لا توجد موديلات بعد. اضغط على «موديل جديد» للبدء.
+              {modelListQuery.trim()
+                ? `لا يوجد موديل مطابق لعبارة البحث «${modelListQuery}».`
+                : 'لا توجد موديلات بعد. اضغط على «موديل جديد» للبدء.'}
             </div>
           )}
         </div>

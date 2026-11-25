@@ -29,6 +29,7 @@ import {
   type DispatchMaterialLine,
 } from '../../utils/printDispatchSlip';
 import { Modal } from '../common/Modal';
+import { ModelSmartSelect } from '../common/ModelSmartSelect';
 
 export const ProductionView: React.FC = () => {
   const {
@@ -1141,18 +1142,13 @@ export const ProductionView: React.FC = () => {
                   </span>
                 )}
               </label>
-              <select
+              <ModelSmartSelect
+                models={state.models}
                 value={selectedModelId}
                 disabled={Boolean(editingBatch && editingBatch.status !== 'planned')}
-                onChange={(e) => handleBatchModelChange(e.target.value)}
-                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs disabled:bg-[#F3F2EE] disabled:text-[#6E6C66]"
-              >
-                {state.models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.sku})
-                  </option>
-                ))}
-              </select>
+                onChange={handleBatchModelChange}
+                showVariantCount
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold mb-1">الورشة المسؤولة عن التقفيل</label>
@@ -1653,17 +1649,12 @@ export const ProductionView: React.FC = () => {
           {!editingVariant && (
             <div>
               <label className="block text-xs font-semibold mb-1">الموديل</label>
-              <select
+              <ModelSmartSelect
+                models={state.models}
                 value={varModelId}
-                onChange={(e) => applyModelDefaults(e.target.value)}
-                className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs"
-              >
-                {state.models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.sku})
-                  </option>
-                ))}
-              </select>
+                onChange={applyModelDefaults}
+                showVariantCount
+              />
             </div>
           )}
 

@@ -28,6 +28,7 @@ import {
   OVERHEAD_CATEGORY_LABELS,
   toWholeQty,
 } from '../../utils/calculations';
+import { ModelSmartSelect } from '../common/ModelSmartSelect';
 
 const CHART_COLORS = ['#1A1A1E', '#A67C52', '#8E8B82', '#D4B896', '#3D6B59'];
 const ALL_MODELS_VALUE = '__all__';
@@ -421,22 +422,21 @@ export const CostCalculatorView: React.FC = () => {
                 <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
                   اختر الموديل
                 </label>
-                <select
+                <ModelSmartSelect
+                  models={state.models}
                   value={allModelsSelected ? ALL_MODELS_VALUE : activeModel?.id || ''}
-                  onChange={(e) => handleModelChange(e.target.value)}
-                  className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3.5 py-2.5 text-sm font-semibold text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
-                >
-                  {state.models.length > 0 && (
-                    <option value={ALL_MODELS_VALUE}>
-                      كل الموديلات ({state.models.length} موديل)
-                    </option>
-                  )}
-                  {state.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.sku})
-                    </option>
-                  ))}
-                </select>
+                  onChange={handleModelChange}
+                  size="md"
+                  allOption={
+                    state.models.length > 0
+                      ? {
+                          value: ALL_MODELS_VALUE,
+                          label: `كل الموديلات (${state.models.length} موديل)`,
+                          sublabel: 'محاكاة وتطبيق نسبة الإضافة (Markup %) جماعياً',
+                        }
+                      : undefined
+                  }
+                />
               </div>
 
               <div>

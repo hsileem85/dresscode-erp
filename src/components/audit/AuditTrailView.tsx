@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Archive,
+  Calendar,
   ChevronDown,
   ChevronUp,
   Database,
@@ -11,10 +12,12 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Sparkles,
   Trash2,
   User as UserIcon,
   UserCog,
   UserPlus,
+  X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useConfirm } from '../common/ConfirmDialog';
@@ -129,6 +132,12 @@ function isDiffEntry(val: unknown): val is { old: unknown; new: unknown } {
   );
 }
 
+function toIsoDateOffset(daysAgo: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return d.toISOString().slice(0, 10);
+}
+
 const PAGE_SIZE = 50;
 
 export const AuditTrailView: React.FC = () => {
@@ -137,7 +146,9 @@ export const AuditTrailView: React.FC = () => {
 
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [totalCount, setTotalCount] = useState(0);
+  const [detailMatchedIds, setDetailMatchedIds] = useState<Set<number>>(() => new Set());
   const [stats, setStats] = useState<AuditLogStats | null>(null);
+  const [actors, setActors] = useState<{ email: string; name: string }[]>([]);
   const [missingMigration, setMissingMigration] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -151,26 +162,43 @@ export const AuditTrailView: React.FC = () => {
   const [roleValue, setRoleValue] = useState<UserRole>('staff');
   const [roleSaving, setRoleSaving] = useState(false);
 
-  // Filters
+  // Smart Search & Rich Filters
   const [monthFilter, setMonthFilter] = useState('');
   const [tableFilter, setTableFilter] = useState('');
   const [actionFilter, setActionFilter] = useState<AuditAction | ''>('');
+  const [actorFilter, setActorFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [fieldFocus, setFieldFocus] = useState<'' | 'stock' | 'money'>('');
   const [searchFilter, setSearchFilter] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [busyMonth, setBusyMonth] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchFilter);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchFilter]);
 
   const loadData = useCallback(async () => {
     if (!cloudConnected) return;
     setLoading(true);
     setErrorMsg(null);
     try {
-      const [logsRes, statsRes, rolesRes] = await Promise.all([
+      const [logsRes, statsRes, rolesRes, actorsRes] = await Promise.all([
         erpDb.fetchAuditLogs({
           month: monthFilter || undefined,
           tableName: tableFilter || undefined,
           action: actionFilter || undefined,
-          search: searchFilter || undefined,
+          actorEmail: actorFilter || undefined,
+          dateFrom: dateFrom || undefined,
+          dateTo: dateTo || undefined,
+          fieldFocus: fieldFocus || undefined,
+          fieldLabels: FIELD_LABELS,
+          search: debouncedSearch || undefined,
           limit: PAGE_SIZE,
           offset: page * PAGE_SIZE,
         }),
@@ -178,18 +206,22 @@ export const AuditTrailView: React.FC = () => {
         userRole === 'admin'
           ? erpDb.fetchUserRoles()
           : Promise.resolve({ rows: [] as UserRoleRecord[], missingTable: false }),
+        erpDb.fetchAuditActors(),
       ]);
 
       if (logsRes.missingMigration || statsRes.missingMigration) {
         setMissingMigration(true);
         setLogs([]);
+        setDetailMatchedIds(new Set());
         setStats(null);
         setTotalCount(0);
       } else {
         setMissingMigration(false);
         setLogs(logsRes.rows);
+        setDetailMatchedIds(new Set(logsRes.detailMatchedIds));
         setTotalCount(logsRes.totalCount);
         setStats(statsRes.stats);
+        setActors(actorsRes);
       }
 
       setRolesMissingTable(rolesRes.missingTable);
@@ -199,7 +231,19 @@ export const AuditTrailView: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [cloudConnected, userRole, monthFilter, tableFilter, actionFilter, searchFilter, page]);
+  }, [
+    cloudConnected,
+    userRole,
+    monthFilter,
+    tableFilter,
+    actionFilter,
+    actorFilter,
+    dateFrom,
+    dateTo,
+    fieldFocus,
+    debouncedSearch,
+    page,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -212,6 +256,30 @@ export const AuditTrailView: React.FC = () => {
       active = false;
     };
   }, [loadData]);
+
+  const hasAnyFilter = Boolean(
+    searchFilter.trim() ||
+      monthFilter ||
+      tableFilter ||
+      actionFilter ||
+      actorFilter ||
+      dateFrom ||
+      dateTo ||
+      fieldFocus
+  );
+
+  const clearAllFilters = () => {
+    setSearchFilter('');
+    setDebouncedSearch('');
+    setMonthFilter('');
+    setTableFilter('');
+    setActionFilter('');
+    setActorFilter('');
+    setDateFrom('');
+    setDateTo('');
+    setFieldFocus('');
+    setPage(0);
+  };
 
   const handleSaveRole = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -723,17 +791,33 @@ export const AuditTrailView: React.FC = () => {
         </div>
       )}
 
-      {/* Filters & Search Bar */}
+      {/* Smart Search & Filters Bar */}
       {!missingMigration && (
-        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 space-y-3">
+        <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 space-y-3.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <History className="w-4 h-4 text-[#A67C52]" />
               <h2 className="text-sm font-bold text-[#1A1A1E]">
                 سجل حركات النظام ({formatNumber(totalCount, 0)} سجل)
               </h2>
+              {hasAnyFilter && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-[10px] font-bold">
+                  <Sparkles className="w-3 h-3" />
+                  <span>بحث ذكي نشط</span>
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
+              {hasAnyFilter && (
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>مسح الفلاتر</span>
+                </button>
+              )}
               {monthFilter && (
                 <button
                   type="button"
@@ -756,28 +840,149 @@ export const AuditTrailView: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-[#9C9990] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="text"
-                value={searchFilter}
-                onChange={(e) => {
-                  setSearchFilter(e.target.value);
+          {/* Primary Smart Search Input (Multi-word + Arabic Normalized + Deep Diff Search) */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-[#A67C52] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchFilter}
+              onChange={(e) => {
+                setSearchFilter(e.target.value);
+                setPage(0);
+              }}
+              placeholder="بحث ذكي: اكتب أي كلمات بأي ترتيب — اسم موديل، عميل، رقم فاتورة (PO/SO)، مبلغ، حقل (مثل: السعر أو الرصيد)، أو مستخدم..."
+              className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] focus:bg-white pr-10 pl-9 py-2.5 text-xs sm:text-sm font-medium text-[#1A1A1E] focus:outline-none focus:border-[#A67C52] transition-colors"
+            />
+            {searchFilter && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchFilter('');
+                  setDebouncedSearch('');
                   setPage(0);
                 }}
-                placeholder="بحث بالملخص أو البريد الإلكتروني..."
-                className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] pr-9 pl-3 py-2 text-xs focus:outline-none focus:border-[#A67C52]"
-              />
-            </div>
+                aria-label="مسح البحث"
+                className="absolute left-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-[#9C9990] hover:text-[#1A1A1E] hover:bg-[#F3F2EE] cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
 
+          {/* One-Click Smart Filter Chips */}
+          {(() => {
+            const today = toIsoDateOffset(0);
+            const weekAgo = toIsoDateOffset(6);
+            const isToday = dateFrom === today && dateTo === today;
+            const isLast7 = dateFrom === weekAgo && dateTo === today;
+            const myEmail = user?.email?.trim().toLowerCase() || '';
+            const isMine = Boolean(myEmail && actorFilter.toLowerCase() === myEmail);
+
+            const chipClass = (active: boolean) =>
+              `inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors cursor-pointer border ${
+                active
+                  ? 'bg-[#1A1A1E] text-white border-[#1A1A1E]'
+                  : 'bg-[#FAF9F7] text-[#4B4A46] border-[#E5E3DD] hover:border-[#A67C52] hover:text-[#8E6742]'
+              }`;
+
+            return (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-[#6E6C66] ml-1">فلاتر سريعة:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isToday) {
+                      setDateFrom('');
+                      setDateTo('');
+                    } else {
+                      setDateFrom(today);
+                      setDateTo(today);
+                      setMonthFilter('');
+                    }
+                    setPage(0);
+                  }}
+                  className={chipClass(isToday)}
+                >
+                  <Calendar className="w-3 h-3" />
+                  <span>اليوم</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isLast7) {
+                      setDateFrom('');
+                      setDateTo('');
+                    } else {
+                      setDateFrom(weekAgo);
+                      setDateTo(today);
+                      setMonthFilter('');
+                    }
+                    setPage(0);
+                  }}
+                  className={chipClass(isLast7)}
+                >
+                  <span>آخر 7 أيام</span>
+                </button>
+                {myEmail && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActorFilter(isMine ? '' : myEmail);
+                      setPage(0);
+                    }}
+                    className={chipClass(isMine)}
+                  >
+                    <UserIcon className="w-3 h-3" />
+                    <span>حركاتي فقط</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActionFilter(actionFilter === 'DELETE' ? '' : 'DELETE');
+                    setPage(0);
+                  }}
+                  className={chipClass(actionFilter === 'DELETE')}
+                >
+                  <span>عمليات الحذف فقط</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFieldFocus(fieldFocus === 'stock' ? '' : 'stock');
+                    setPage(0);
+                  }}
+                  className={chipClass(fieldFocus === 'stock')}
+                >
+                  <span>تغييرات المخزون والكميات</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFieldFocus(fieldFocus === 'money' ? '' : 'money');
+                    setPage(0);
+                  }}
+                  className={chipClass(fieldFocus === 'money')}
+                >
+                  <span>تغييرات الأسعار والمبالغ</span>
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* Structured Filter Row (Month, Section, Action, User, Date Range) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
             <select
               value={monthFilter}
               onChange={(e) => {
                 setMonthFilter(e.target.value);
+                if (e.target.value) {
+                  setDateFrom('');
+                  setDateTo('');
+                }
                 setPage(0);
               }}
-              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
             >
               <option value="">كل الأشهر</option>
               {(stats?.months || []).map((m) => (
@@ -793,7 +998,7 @@ export const AuditTrailView: React.FC = () => {
                 setTableFilter(e.target.value);
                 setPage(0);
               }}
-              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
             >
               {ENTITY_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -808,13 +1013,62 @@ export const AuditTrailView: React.FC = () => {
                 setActionFilter(e.target.value as AuditAction | '');
                 setPage(0);
               }}
-              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
             >
-              <option value="">كل العمليات (إضافة / تعديل / حذف)</option>
+              <option value="">كل العمليات</option>
               <option value="INSERT">إضافة فقط</option>
               <option value="UPDATE">تعديل فقط</option>
               <option value="DELETE">حذف فقط</option>
             </select>
+
+            <select
+              value={actorFilter}
+              onChange={(e) => {
+                setActorFilter(e.target.value);
+                setPage(0);
+              }}
+              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+            >
+              <option value="">كل المستخدمين</option>
+              {actors.map((a) => {
+                const disp = formatDisplayIdentifier(a.email) || a.email;
+                const label =
+                  a.name && formatDisplayIdentifier(a.name) !== disp
+                    ? `${formatDisplayIdentifier(a.name)} (${disp})`
+                    : disp;
+                return (
+                  <option key={a.email} value={a.email}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                if (e.target.value) setMonthFilter('');
+                setPage(0);
+              }}
+              aria-label="من تاريخ"
+              title="من تاريخ"
+              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+            />
+
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                if (e.target.value) setMonthFilter('');
+                setPage(0);
+              }}
+              aria-label="إلى تاريخ"
+              title="إلى تاريخ"
+              className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+            />
           </div>
 
           {/* Audit Log Entries List */}
@@ -822,6 +1076,7 @@ export const AuditTrailView: React.FC = () => {
             {logs.map((entry) => {
               const meta = ACTION_META[entry.action] || ACTION_META.UPDATE;
               const isExpanded = expandedId === entry.id;
+              const matchedInDetails = detailMatchedIds.has(entry.id);
               const fieldEntries = entry.changedFields ? Object.entries(entry.changedFields) : [];
 
               return (
@@ -845,6 +1100,12 @@ export const AuditTrailView: React.FC = () => {
                           <span className="text-xs text-[#4B4A46] truncate">
                             — {entry.recordSummary || entry.recordId || '—'}
                           </span>
+                          {matchedInDetails && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#F6EFE7] text-[#8E6742] text-[10px] font-bold">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              تطابق داخل التفاصيل
+                            </span>
+                          )}
                         </div>
                         <div className="flex flex-wrap items-center gap-3 mt-1 text-[11px] text-[#6E6C66]">
                           <span className="inline-flex items-center gap-1 font-semibold text-[#8E6742]">

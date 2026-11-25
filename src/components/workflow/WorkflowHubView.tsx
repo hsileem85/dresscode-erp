@@ -30,6 +30,7 @@ import {
   getAutoIncludedTrimsForModel,
   toWholeQty,
 } from '../../utils/calculations';
+import { ModelSmartSelect } from '../common/ModelSmartSelect';
 
 type WorkflowTrack = 'launch' | 'production' | 'sales';
 
@@ -653,17 +654,12 @@ export const WorkflowHubView: React.FC = () => {
                 <label className="block text-xs font-bold text-[#1A1A1E] mb-1">
                   اختر الموديل المراد تصنيعه
                 </label>
-                <select
+                <ModelSmartSelect
+                  models={state.models}
                   value={checkModel?.id || ''}
-                  onChange={(e) => setCheckModelId(e.target.value)}
-                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-semibold"
-                >
-                  {state.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.sku})
-                    </option>
-                  ))}
-                </select>
+                  onChange={setCheckModelId}
+                  showVariantCount
+                />
               </div>
               <div className="sm:col-span-3">
                 <label className="block text-xs font-bold text-[#1A1A1E] mb-1">
@@ -962,20 +958,15 @@ export const WorkflowHubView: React.FC = () => {
               <div className="lg:col-span-4 space-y-3">
                 <div>
                   <label className="block text-xs font-bold text-[#1A1A1E] mb-1">اختر الموديل</label>
-                  <select
+                  <ModelSmartSelect
+                    models={state.models}
                     value={launchModel?.id || ''}
-                    onChange={(e) => {
-                      setLaunchModelId(e.target.value);
+                    onChange={(val) => {
+                      setLaunchModelId(val);
                       setMatrixDoneMsg(null);
                     }}
-                    className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-semibold"
-                  >
-                    {state.models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name} ({m.sku}) — {m.variants.length} مقاس مسجل
-                      </option>
-                    ))}
-                  </select>
+                    showVariantCount
+                  />
                 </div>
 
                 {launchModel && (
