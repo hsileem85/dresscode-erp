@@ -1047,8 +1047,158 @@ export const erpDb = {
   },
 
   async receivePurchaseOrder(poId: string) {
-    const { error } = await db().rpc('receive_purchase_order', { p_po_id: poId });
-    if (error) throw error;
+    const client = db();
+    const { error } = await client.rpc('receive_purchase_order', { p_po_id: poId });
+    if (!error) return;
+
+    // If the error is a deliberate business rule guard from PostgreSQL, surface it immediately
+    const msg = String(error.message || '');
+    if (
+      msg.includes('تم استلامه بالفعل') ||
+      msg.includes('already received') ||
+      msg.includes('ملغي ولا يمكن استلامه') ||
+      msg.includes('غير موجود')
+    ) {
+      throw error;
+    }
+
+    // Safe client-side fallback if RPC is missing or out of sync with schema (e.g. shipping_allocated / NULL)
+    const { data: poRow, error: poReadErr } = await client
+      .from('purchase_orders')
+      .select('*')
+      .eq('id', poId)
+      .single();
+    if (poReadErr || !poRow) throw error;
+    if (poRow.status === 'received' || poRow.status === 'cancelled') return;
+
+    const { data: items, error: itemsErr } = await client
+      .from('purchase_order_items')
+      .select('*')
+      .eq('purchase_order_id', poId);
+    if (itemsErr) throw itemsErr;
+    if (!items || items.length === 0) {
+      throw new Error('أمر الشراء لا يحتوي على أي أصناف لاستلامها بالمخزن');
+    }
+
+    let itemsTotal = 0;
+    for (const it of items) {
+      const qty = Math.max(0, Number(it.quantity) || 0);
+      const unitPrice = Math.max(0, Number(it.unit_price) || 0);
+      const shipAlloc = Math.max(0, Number(it.shipping_allocated) || 0);
+      const lineTotal = Number(it.line_total) || qty * unitPrice;
+      itemsTotal += lineTotal;
+
+      if (it.item_type === 'fabric' && it.fabric_id) {
+        const { data: fab, error: fabReadErr } = await client
+          .from('fabrics')
+          .select('id, stock_qty, price_per_unit')
+          .eq('id', it.fabric_id)
+          .single();
+        if (fabReadErr || !fab) throw fabReadErr || new Error('القماش غير موجود بالمخزن');
+
+        const oldQty = Math.max(0, Number(fab.stock_qty) || 0);
+        const oldCost = Math.max(0, Number(fab.price_per_unit) || 0);
+        const landedUnit = qty > 0 ? unitPrice + shipAlloc / qty : unitPrice;
+        const newQty = Math.round(((Number(fab.stock_qty) || 0) + qty) * 1000) / 1000;
+        const wacDenom = oldQty + qty;
+        const newWac =
+          wacDenom > 0
+            ? Math.round(((oldQty * oldCost + qty * landedUnit) / wacDenom) * 100) / 100
+            : Math.round(landedUnit * 100) / 100;
+
+        const { error: fabUpdErr } = await client
+          .from('fabrics')
+          .update({ stock_qty: newQty, price_per_unit: Math.max(0, newWac) })
+          .eq('id', it.fabric_id);
+        if (fabUpdErr) throw fabUpdErr;
+
+        await client.from('inventory_movements').insert({
+          item_type: 'fabric',
+          fabric_id: it.fabric_id,
+          movement_type: 'purchase_in',
+          qty_delta: qty,
+          unit_cost: Math.round(landedUnit * 10000) / 10000,
+          reference_type: 'purchase_order',
+          reference_id: poId,
+          notes:
+            shipAlloc > 0
+              ? `استلام أمر شراء ${poRow.po_number} (شامل شحن)`
+              : `استلام أمر شراء ${poRow.po_number}`,
+        });
+      } else if (it.item_type === 'trim' && it.trim_id) {
+        const { data: tr, error: trReadErr } = await client
+          .from('trims')
+          .select('id, stock_qty, pack_price, units_per_pack')
+          .eq('id', it.trim_id)
+          .single();
+        if (trReadErr || !tr) throw trReadErr || new Error('الكلفة غير موجودة بالمخزن');
+
+        const unitsPerPack = Math.max(1, Number(it.units_per_pack) || Number(tr.units_per_pack) || 1);
+        const addedUnits = Math.round(qty * unitsPerPack * 1000) / 1000;
+        const oldQty = Math.max(0, Number(tr.stock_qty) || 0);
+        const oldPackPrice = Math.max(0, Number(tr.pack_price) || 0);
+        const oldUnitCost = oldPackPrice / Math.max(1, Number(tr.units_per_pack) || 1);
+        const landedPack = qty > 0 ? unitPrice + shipAlloc / qty : unitPrice;
+        const newUnitCost = landedPack / unitsPerPack;
+        const newQty = Math.round(((Number(tr.stock_qty) || 0) + addedUnits) * 1000) / 1000;
+        const wacDenom = oldQty + addedUnits;
+        const newPackPrice =
+          wacDenom > 0
+            ? Math.round(
+                (((oldQty * oldUnitCost + addedUnits * newUnitCost) / wacDenom) * unitsPerPack) *
+                  100
+              ) / 100
+            : Math.round(landedPack * 100) / 100;
+
+        const { error: trUpdErr } = await client
+          .from('trims')
+          .update({ stock_qty: newQty, pack_price: Math.max(0, newPackPrice) })
+          .eq('id', it.trim_id);
+        if (trUpdErr) throw trUpdErr;
+
+        await client.from('inventory_movements').insert({
+          item_type: 'trim',
+          trim_id: it.trim_id,
+          movement_type: 'purchase_in',
+          qty_delta: addedUnits,
+          unit_cost: Math.round(newUnitCost * 10000) / 10000,
+          reference_type: 'purchase_order',
+          reference_id: poId,
+          notes:
+            shipAlloc > 0
+              ? `استلام أمر شراء ${poRow.po_number} (شامل شحن)`
+              : `استلام أمر شراء ${poRow.po_number}`,
+        });
+      }
+    }
+
+    const finalTotal = Math.round((itemsTotal + Math.max(0, Number(poRow.shipping_cost) || 0)) * 100) / 100;
+    const { error: poUpdErr } = await client
+      .from('purchase_orders')
+      .update({
+        status: 'received',
+        total_amount: finalTotal,
+        received_at: new Date().toISOString(),
+      })
+      .eq('id', poId);
+    if (poUpdErr) throw poUpdErr;
+
+    if (poRow.supplier_id) {
+      const { data: supRow } = await client
+        .from('suppliers')
+        .select('balance_payable')
+        .eq('id', poRow.supplier_id)
+        .single();
+      if (supRow) {
+        await client
+          .from('suppliers')
+          .update({
+            balance_payable:
+              Math.round(((Number(supRow.balance_payable) || 0) + finalTotal) * 100) / 100,
+          })
+          .eq('id', poRow.supplier_id);
+      }
+    }
   },
 
   async cancelPurchaseOrder(poId: string, currentStatus?: PurchaseOrder['status']) {

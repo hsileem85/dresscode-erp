@@ -22,12 +22,14 @@ import type {
   TrimSupplyGroup,
 } from '../../types/erp';
 import {
+  blockInvalidDecimalKey,
   blockNonIntegerKey,
   FABRIC_UNIT_LABELS,
   formatMoney,
   formatNumber,
   getTrimUnitCost,
   PURCHASE_UNIT_LABELS,
+  toDecimalQty,
   toWholeQty,
 } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
@@ -538,7 +540,19 @@ export const MaterialsView: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-[11px] bg-[#FAF9F7] rounded-xl p-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] bg-[#FAF9F7] rounded-xl p-2.5">
+                    <div>
+                      <div className="text-[#6E6C66]">الرصيد بالمخزن</div>
+                      <div
+                        className={`font-extrabold tabular-nums ${
+                          fabric.stockQty <= fabric.reorderLevel
+                            ? 'text-red-600'
+                            : 'text-emerald-700'
+                        }`}
+                      >
+                        {formatNumber(fabric.stockQty, 2)} {FABRIC_UNIT_LABELS[fabric.unit]}
+                      </div>
+                    </div>
                     <div>
                       <div className="text-[#6E6C66]">السعر</div>
                       <div className="font-bold tabular-nums">
@@ -574,6 +588,7 @@ export const MaterialsView: React.FC = () => {
                 <tr>
                   <th className="py-3.5 px-4 font-semibold">اسم القماش</th>
                   <th className="py-3.5 px-4 font-semibold">المورد</th>
+                  <th className="py-3.5 px-4 font-semibold">الرصيد بالمخزن</th>
                   <th className="py-3.5 px-4 font-semibold">السعر / الوحدة</th>
                   <th className="py-3.5 px-4 font-semibold">العرض</th>
                   <th className="py-3.5 px-4 font-semibold">الهالك الافتراضي</th>
@@ -601,6 +616,17 @@ export const MaterialsView: React.FC = () => {
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-[#4B4A46]">{fabric.supplier}</td>
+                      <td className="py-3.5 px-4 tabular-nums">
+                        <span
+                          className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-extrabold ${
+                            fabric.stockQty <= fabric.reorderLevel
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-[#F6EFE7] text-[#8E6742]'
+                          }`}
+                        >
+                          {formatNumber(fabric.stockQty, 2)} {FABRIC_UNIT_LABELS[fabric.unit]}
+                        </span>
+                      </td>
                       <td className="py-3.5 px-4 tabular-nums font-semibold text-[#1A1A1E]">
                         {formatMoney(fabric.pricePerUnit, state.currency)}{' '}
                         <span className="text-xs font-normal text-[#6E6C66]">
@@ -643,7 +669,7 @@ export const MaterialsView: React.FC = () => {
                 })}
                 {filteredFabrics.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-[#6E6C66]">
+                    <td colSpan={8} className="py-10 text-center text-[#6E6C66]">
                       لا توجد أقمشة مطابقة للبحث.
                     </td>
                   </tr>
@@ -746,7 +772,19 @@ export const MaterialsView: React.FC = () => {
                         </button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-[11px] bg-[#FAF9F7] rounded-xl p-2.5">
+                    <div className="grid grid-cols-3 gap-2 text-[11px] bg-[#FAF9F7] rounded-xl p-2.5">
+                      <div>
+                        <div className="text-[#6E6C66]">الرصيد بالمخزن</div>
+                        <div
+                          className={`font-extrabold tabular-nums ${
+                            trim.stockQty <= trim.reorderLevel
+                              ? 'text-red-600'
+                              : 'text-emerald-700'
+                          }`}
+                        >
+                          {formatNumber(trim.stockQty, 0)} {trim.unitLabel}
+                        </div>
+                      </div>
                       <div>
                         <div className="text-[#6E6C66]">
                           العبوة ({formatNumber(trim.unitsPerPack, 0)} {trim.unitLabel})
@@ -786,6 +824,7 @@ export const MaterialsView: React.FC = () => {
                     </th>
                     <th className="py-3.5 px-4 font-semibold">التصنيف</th>
                     <th className="py-3.5 px-4 font-semibold">المورد</th>
+                    <th className="py-3.5 px-4 font-semibold">الرصيد بالمخزن</th>
                     <th className="py-3.5 px-4 font-semibold">شراء بالعبوة</th>
                     <th className="py-3.5 px-4 font-semibold">تحويل الوحدة</th>
                     <th className="py-3.5 px-4 font-semibold">تكلفة الوحدة الواحدة</th>
@@ -814,6 +853,17 @@ export const MaterialsView: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-3.5 px-4 text-[#4B4A46]">{trim.supplier}</td>
+                        <td className="py-3.5 px-4 tabular-nums">
+                          <span
+                            className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-extrabold ${
+                              trim.stockQty <= trim.reorderLevel
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-emerald-50 text-emerald-800'
+                            }`}
+                          >
+                            {formatNumber(trim.stockQty, 0)} {trim.unitLabel}
+                          </span>
+                        </td>
                         <td className="py-3.5 px-4 tabular-nums text-[#1A1A1E]">
                           {formatMoney(trim.packPrice, state.currency)}{' '}
                           <span className="text-xs text-[#6E6C66]">
@@ -877,7 +927,7 @@ export const MaterialsView: React.FC = () => {
                   })}
                   {filteredSupplyItems.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-10 text-center text-[#6E6C66]">
+                      <td colSpan={9} className="py-10 text-center text-[#6E6C66]">
                         {activeTabMeta.emptyText}
                       </td>
                     </tr>
@@ -1023,19 +1073,19 @@ export const MaterialsView: React.FC = () => {
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
                 الرصيد المتاح حالياً بالمخزن ({FABRIC_UNIT_LABELS[fabricForm.unit]})
+                <span className="text-[11px] font-normal text-[#6E6C66] mr-1">(يقبل كسور مثل 4.5)</span>
               </label>
               <input
                 type="number"
                 min="0"
-                step="1"
-                inputMode="numeric"
-                pattern="[0-9]*"
+                step="any"
+                inputMode="decimal"
                 value={fabricForm.stockQty ?? 0}
-                onKeyDown={blockNonIntegerKey}
+                onKeyDown={blockInvalidDecimalKey}
                 onChange={(e) =>
                   setFabricForm({
                     ...fabricForm,
-                    stockQty: toWholeQty(e.target.value, 0),
+                    stockQty: toDecimalQty(e.target.value, 0, 3),
                   })
                 }
                 className="w-full rounded-xl border border-[#E5E3DD] bg-[#FBF8F4] px-3.5 py-2.5 text-sm font-bold text-[#8E6742] tabular-nums focus:outline-none focus:border-[#A67C52]"

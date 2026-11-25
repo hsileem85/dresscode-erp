@@ -235,9 +235,10 @@ export const WorkflowHubView: React.FC = () => {
 
     const fabricRows = (checkModel.fabrics || []).map((mf) => {
       const fab = allFabrics.find((f) => f.id === mf.fabricId);
-      const required = Math.ceil(mf.consumption * (1 + (mf.wastePct || 0) / 100) * qty);
+      const required =
+        Math.ceil(mf.consumption * (1 + (mf.wastePct || 0) / 100) * qty * 100) / 100;
       const available = Math.max(0, Number(fab?.stockQty) || 0);
-      const shortage = Math.max(0, Math.ceil(required - available));
+      const shortage = Math.max(0, Math.ceil((required - available) * 100) / 100);
       return {
         fabricId: mf.fabricId,
         name: fab?.name || 'قماش غير معروف',

@@ -225,9 +225,25 @@ export function blockNonIntegerKey(e: { key: string; preventDefault: () => void 
   }
 }
 
+/** Block exponent, sign, and comma keys while allowing decimal point '.' for fabric quantities (e.g. 4.5m) */
+export function blockInvalidDecimalKey(e: { key: string; preventDefault: () => void }): void {
+  if (e.key === 'e' || e.key === 'E' || e.key === '+' || e.key === '-' || e.key === ',') {
+    e.preventDefault();
+  }
+}
+
 /** Sanitize any pasted or typed quantity into a non-negative whole integer */
 export function toWholeQty(value: string | number, min = 0): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return min;
   return Math.max(min, Math.trunc(n));
+}
+
+/** Sanitize any pasted or typed fabric quantity into a non-negative decimal (up to 3 decimal places) */
+export function toDecimalQty(value: string | number, min = 0, decimals = 3): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return min;
+  const factor = Math.pow(10, decimals);
+  const rounded = Math.round(n * factor) / factor;
+  return Math.max(min, rounded);
 }

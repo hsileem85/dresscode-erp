@@ -16,10 +16,12 @@ import { getLookupLabels } from '../../data/defaultLookups';
 import { newUuid } from '../../lib/supabase';
 import type { ModelVariant, ProductionOrder } from '../../types/erp';
 import {
+  blockInvalidDecimalKey,
   blockNonIntegerKey,
   calculateModelCost,
   FABRIC_UNIT_LABELS,
   formatMoney,
+  toDecimalQty,
   toWholeQty,
 } from '../../utils/calculations';
 import {
@@ -1918,15 +1920,23 @@ export const ProductionView: React.FC = () => {
                     <input
                       type="number"
                       min="0"
-                      step="1"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
+                      step={item.kind === 'قماش' ? 'any' : '1'}
+                      inputMode={item.kind === 'قماش' ? 'decimal' : 'numeric'}
+                      pattern={item.kind === 'قماش' ? undefined : '[0-9]*'}
                       value={item.quantity}
-                      onKeyDown={blockNonIntegerKey}
+                      onKeyDown={item.kind === 'قماش' ? blockInvalidDecimalKey : blockNonIntegerKey}
                       onChange={(e) =>
                         setDispatchMaterials((prev) =>
                           prev.map((row, i) =>
-                            i === idx ? { ...row, quantity: toWholeQty(e.target.value, 0) } : row
+                            i === idx
+                              ? {
+                                  ...row,
+                                  quantity:
+                                    row.kind === 'قماش'
+                                      ? toDecimalQty(e.target.value, 0, 3)
+                                      : toWholeQty(e.target.value, 0),
+                                }
+                              : row
                           )
                         )
                       }

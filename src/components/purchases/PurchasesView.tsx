@@ -15,11 +15,13 @@ import { getLookupLabels } from '../../data/defaultLookups';
 import { CURRENCIES } from '../../types/erp';
 import type { PurchaseOrder } from '../../types/erp';
 import {
+  blockInvalidDecimalKey,
   blockNonIntegerKey,
   FABRIC_UNIT_LABELS,
   formatMoney,
   formatNumber,
   PURCHASE_UNIT_LABELS,
+  toDecimalQty,
   toWholeQty,
 } from '../../utils/calculations';
 import { Modal } from '../common/Modal';
@@ -28,6 +30,7 @@ interface DraftLine {
   itemType: 'fabric' | 'trim';
   refId: string;
   quantity: number;
+  qtyText?: string;
   unitPrice: number;
 }
 
@@ -61,9 +64,14 @@ export const PurchasesView: React.FC = () => {
   >('fabric_qty');
   const [notes, setNotes] = useState<string>(() => pendingPoDraft?.notes || '');
   const [lines, setLines] = useState<DraftLine[]>(() =>
-    pendingPoDraft?.lines?.length ? pendingPoDraft.lines : []
+    pendingPoDraft?.lines?.length
+      ? pendingPoDraft.lines.map((l) => ({ ...l, qtyText: String(l.quantity) }))
+      : []
   );
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [stockFilter, setStockFilter] = useState<'all' | 'fabrics' | 'trims'>('all');
   const [busyPoId, setBusyPoId] = useState<string | null>(null);
 
   // Supplier Payment Modal state
@@ -98,14 +106,26 @@ export const PurchasesView: React.FC = () => {
     for (const l of lines) {
       const k = `${l.itemType}:${l.refId}`;
       const existingIdx = indexByKey.get(k);
+      const safeQty =
+        l.itemType === 'fabric' ? toDecimalQty(l.quantity, 0, 3) : toWholeQty(l.quantity, 0);
       if (existingIdx !== undefined) {
+        const prevQty = merged[existingIdx].quantity;
+        const summed =
+          l.itemType === 'fabric'
+            ? Math.round((prevQty + safeQty) * 1000) / 1000
+            : toWholeQty(prevQty + safeQty, 1);
         merged[existingIdx] = {
           ...merged[existingIdx],
-          quantity: toWholeQty(merged[existingIdx].quantity, 0) + toWholeQty(l.quantity, 0),
+          quantity: summed,
+          qtyText: String(summed),
         };
       } else {
+        const initQty =
+          l.itemType === 'fabric'
+            ? toDecimalQty(l.quantity, 0.01, 3)
+            : toWholeQty(l.quantity, 1);
         indexByKey.set(k, merged.length);
-        merged.push({ ...l, quantity: toWholeQty(l.quantity, 1) });
+        merged.push({ ...l, quantity: initQty, qtyText: String(initQty) });
       }
     }
     setLines(merged);
@@ -137,10 +157,14 @@ export const PurchasesView: React.FC = () => {
     }
   };
 
-  const runPoAction = async (poId: string, action: () => Promise<void>) => {
+  const runPoAction = async (poId: string, action: () => Promise<void>, successMessage?: string) => {
     setBusyPoId(poId);
     try {
       await action();
+      if (successMessage) {
+        setToastMsg(successMessage);
+        setTimeout(() => setToastMsg(null), 4000);
+      }
     } finally {
       setBusyPoId(null);
     }
@@ -148,6 +172,7 @@ export const PurchasesView: React.FC = () => {
 
   const closeCreateModal = () => {
     setModalOpen(false);
+    setFormError(null);
     setDraftSourceLabel('');
     if (pendingPoDraft) clearPendingPoDraft();
   };
@@ -155,6 +180,7 @@ export const PurchasesView: React.FC = () => {
   const openModal = () => {
     if (pendingPoDraft) clearPendingPoDraft();
     setDraftSourceLabel('');
+    setFormError(null);
     const firstSup = state.suppliers[0];
     setSupplierId(firstSup?.id || '');
     setSupplierName(firstSup?.name || 'مورد عام');
@@ -169,6 +195,7 @@ export const PurchasesView: React.FC = () => {
               itemType: 'fabric',
               refId: state.fabrics[0].id,
               quantity: 50,
+              qtyText: '50',
               unitPrice: state.fabrics[0].pricePerUnit,
             },
           ]
@@ -185,6 +212,7 @@ export const PurchasesView: React.FC = () => {
           itemType: 'fabric',
           refId: state.fabrics[0].id,
           quantity: 50,
+          qtyText: '50',
           unitPrice: state.fabrics[0].pricePerUnit,
         },
       ]);
@@ -195,6 +223,7 @@ export const PurchasesView: React.FC = () => {
           itemType: 'trim',
           refId: state.trims[0].id,
           quantity: 10,
+          qtyText: '10',
           unitPrice: state.trims[0].packPrice,
         },
       ]);
@@ -294,34 +323,44 @@ export const PurchasesView: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (lines.length === 0) return;
+    setFormError(null);
     setSubmitting(true);
     try {
-      const poNumber = `PO-${new Date().getFullYear()}-${String(
-        state.purchaseOrders.length + 1
-      ).padStart(3, '0')}`;
+      const year = new Date().getFullYear();
+      const prefix = `PO-${year}-`;
+      let maxSeq = 0;
+      for (const existing of state.purchaseOrders) {
+        if (existing.poNumber?.startsWith(prefix)) {
+          const parsed = Number.parseInt(existing.poNumber.slice(prefix.length), 10);
+          if (Number.isFinite(parsed) && parsed > maxSeq) maxSeq = parsed;
+        }
+      }
+      const poNumber = `${prefix}${String(Math.max(maxSeq, state.purchaseOrders.length) + 1).padStart(3, '0')}`;
+
       const items = lines.map((line, idx) => {
-        const wholeQty = toWholeQty(line.quantity, 1);
         const shippingAllocated = poCalc.allocations[idx]?.shippingAllocated || 0;
         if (line.itemType === 'fabric') {
+          const fabQty = toDecimalQty(line.quantity, 0.01, 3);
           const fab = state.fabrics.find((f) => f.id === line.refId);
           return {
             itemType: 'fabric' as const,
             fabricId: line.refId,
             trimId: null,
             description: fab?.name || 'قماش',
-            quantity: wholeQty,
+            quantity: fabQty,
             unitsPerPack: 1,
             unitPrice: line.unitPrice,
             shippingAllocated,
           };
         }
+        const trimQty = toWholeQty(line.quantity, 1);
         const trim = state.trims.find((t) => t.id === line.refId);
         return {
           itemType: 'trim' as const,
           fabricId: null,
           trimId: line.refId,
           description: trim?.name || 'كلفة',
-          quantity: wholeQty,
+          quantity: trimQty,
           unitsPerPack: trim?.unitsPerPack || 1,
           unitPrice: line.unitPrice,
           shippingAllocated,
@@ -338,6 +377,16 @@ export const PurchasesView: React.FC = () => {
         items,
       });
       closeCreateModal();
+      setToastMsg(
+        receiveImmediately
+          ? `تم حفظ واستلام أمر الشراء (${poNumber}) وتحديث رصيد المخزون تلقائياً ✓`
+          : `تم حفظ أمر الشراء (${poNumber}) كـ «قيد التوريد» — اضغط «استلام بالمخزن» لإضافة الكمية للمخزون.`
+      );
+      setTimeout(() => setToastMsg(null), 5000);
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : 'تعذر حفظ أو استلام أمر الشراء — يرجى المحاولة مرة أخرى.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -349,9 +398,26 @@ export const PurchasesView: React.FC = () => {
 
   const activePoCount = state.purchaseOrders.filter((p) => p.status !== 'cancelled').length;
   const cancelledPoCount = state.purchaseOrders.filter((p) => p.status === 'cancelled').length;
+  const totalTrimsStockUnits = state.trims.reduce((s, t) => s + (t.stockQty || 0), 0);
 
   return (
     <div className="space-y-6">
+      {toastMsg && (
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-xs font-bold text-emerald-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{toastMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToastMsg(null)}
+            className="text-emerald-700 underline text-[11px] cursor-pointer"
+          >
+            إغلاق
+          </button>
+        </div>
+      )}
+
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
@@ -365,16 +431,16 @@ export const PurchasesView: React.FC = () => {
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5">
-          <div className="text-xs font-semibold text-[#6E6C66]">رصيد الأقمشة بالمخزن</div>
+          <div className="text-xs font-semibold text-[#6E6C66]">رصيد المخزن الحالي (أقمشة وكلف)</div>
           <div className="text-2xl font-bold text-[#8E6742] tabular-nums mt-2">
             {formatNumber(
               state.fabrics.reduce((s, f) => s + (f.stockQty || 0), 0),
-              1
+              2
             )}{' '}
             متر/كيلو
           </div>
-          <div className="text-xs text-[#6E6C66] mt-1">
-            يُحدّث تلقائياً مع متوسط التكلفة المرجح (WAC)
+          <div className="text-xs text-[#6E6C66] mt-1 tabular-nums">
+            + {formatNumber(totalTrimsStockUnits, 0)} وحدة كلف ومستلزمات • WAC تلقائي
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 flex flex-col justify-between">
@@ -395,38 +461,102 @@ export const PurchasesView: React.FC = () => {
         </div>
       </div>
 
-      {/* Live Raw Material Stock Strip */}
-      <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <PackagePlus className="w-4 h-4 text-[#A67C52]" />
-          <h2 className="text-sm font-bold text-[#1A1A1E]">
-            رصيد مخزن الخامات الحالي (أقمشة وكلف)
-          </h2>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {state.fabrics.map((f) => (
-            <div
-              key={f.id}
-              className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 flex items-center justify-between"
-            >
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-[#1A1A1E] truncate">{f.name}</div>
-                <div className="text-[11px] text-[#6E6C66] tabular-nums">
-                  متوسط السعر: {formatMoney(f.pricePerUnit, state.currency)}
-                </div>
-              </div>
-              <span
-                className={`text-xs font-extrabold tabular-nums px-2 py-1 rounded-lg shrink-0 ${
-                  f.stockQty <= f.reorderLevel
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-[#F6EFE7] text-[#8E6742]'
+      {/* Live Raw Material Stock Strip (Fabrics + Trims/Supplies) */}
+      <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <PackagePlus className="w-4 h-4 text-[#A67C52]" />
+            <h2 className="text-sm font-bold text-[#1A1A1E]">
+              رصيد مخزن الخامات الحالي (أقمشة وكلف)
+            </h2>
+          </div>
+          <div className="inline-flex rounded-lg bg-[#F3F2EE] p-0.5 text-[11px] font-bold">
+            {(
+              [
+                ['all', `الكل (${state.fabrics.length + state.trims.length})`],
+                ['fabrics', `الأقمشة (${state.fabrics.length})`],
+                ['trims', `الكلف والمستلزمات (${state.trims.length})`],
+              ] as const
+            ).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setStockFilter(val)}
+                className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                  stockFilter === val
+                    ? 'bg-[#1A1A1E] text-white'
+                    : 'text-[#6E6C66] hover:text-[#1A1A1E]'
                 }`}
               >
-                {formatNumber(f.stockQty, 1)} {FABRIC_UNIT_LABELS[f.unit]}
-              </span>
-            </div>
-          ))}
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {(stockFilter === 'all' || stockFilter === 'fabrics') && state.fabrics.length > 0 && (
+          <div className="space-y-2">
+            {stockFilter === 'all' && (
+              <div className="text-[11px] font-bold text-[#6E6C66]">الأقمشة:</div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {state.fabrics.map((f) => (
+                <div
+                  key={f.id}
+                  className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-[#1A1A1E] truncate">{f.name}</div>
+                    <div className="text-[11px] text-[#6E6C66] tabular-nums">
+                      متوسط السعر: {formatMoney(f.pricePerUnit, state.currency)}
+                    </div>
+                  </div>
+                  <span
+                    className={`text-xs font-extrabold tabular-nums px-2 py-1 rounded-lg shrink-0 ${
+                      f.stockQty <= f.reorderLevel
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-[#F6EFE7] text-[#8E6742]'
+                    }`}
+                  >
+                    {formatNumber(f.stockQty, 2)} {FABRIC_UNIT_LABELS[f.unit]}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(stockFilter === 'all' || stockFilter === 'trims') && state.trims.length > 0 && (
+          <div className="space-y-2">
+            {stockFilter === 'all' && (
+              <div className="text-[11px] font-bold text-[#6E6C66]">الكلف ومستلزمات التصنيع والبراند:</div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {state.trims.map((t) => (
+                <div
+                  key={t.id}
+                  className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-[#1A1A1E] truncate">{t.name}</div>
+                    <div className="text-[11px] text-[#6E6C66] tabular-nums">
+                      العبوة: {formatMoney(t.packPrice, state.currency)} ({t.unitsPerPack} {t.unitLabel})
+                    </div>
+                  </div>
+                  <span
+                    className={`text-xs font-extrabold tabular-nums px-2 py-1 rounded-lg shrink-0 ${
+                      t.stockQty <= t.reorderLevel
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-emerald-50 text-emerald-800'
+                    }`}
+                  >
+                    {formatNumber(t.stockQty, 0)} {t.unitLabel}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Purchase Orders List (Mobile Cards + Desktop Table) */}
@@ -475,7 +605,9 @@ export const PurchasesView: React.FC = () => {
                   </span>
                 </div>
                 <div className="text-xs text-[#4B4A46] bg-[#FAF9F7] rounded-xl p-2.5">
-                  {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
+                  {po.items
+                    .map((it) => `${it.description} (${formatNumber(it.quantity, 2)})`)
+                    .join('، ')}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
@@ -506,7 +638,13 @@ export const PurchasesView: React.FC = () => {
                       <button
                         type="button"
                         disabled={isBusy}
-                        onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
+                        onClick={() =>
+                          void runPoAction(
+                            po.id,
+                            () => receivePO(po.id),
+                            `تم استلام أمر الشراء (${po.poNumber}) وتحديث رصيد المخزون بنجاح ✓`
+                          )
+                        }
                         className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
@@ -600,7 +738,9 @@ export const PurchasesView: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-xs text-[#6E6C66]">{po.orderDate}</td>
                     <td className="py-3 px-4 text-xs text-[#4B4A46]">
-                      {po.items.map((it) => `${it.description} (${it.quantity})`).join('، ')}
+                      {po.items
+                        .map((it) => `${it.description} (${formatNumber(it.quantity, 2)})`)
+                        .join('، ')}
                     </td>
                     <td
                       className={`py-3 px-4 font-bold tabular-nums ${
@@ -644,7 +784,7 @@ export const PurchasesView: React.FC = () => {
                           ? 'تم الاستلام بالمخزن'
                           : isCancelled
                           ? 'ملغي'
-                          : 'قيد التوريد'}
+                          : 'قيد التوريد (لم يُضف للمخزن)'}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -653,7 +793,13 @@ export const PurchasesView: React.FC = () => {
                           <button
                             type="button"
                             disabled={isBusy}
-                            onClick={() => void runPoAction(po.id, () => receivePO(po.id))}
+                            onClick={() =>
+                              void runPoAction(
+                                po.id,
+                                () => receivePO(po.id),
+                                `تم استلام أمر الشراء (${po.poNumber}) وتحديث رصيد المخزون بنجاح ✓`
+                              )
+                            }
                             className="inline-flex items-center gap-1 text-xs font-bold bg-[#1A1A1E] text-white px-3 py-1.5 rounded-lg hover:bg-[#2E2E35] cursor-pointer disabled:opacity-50"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 text-[#BD956D]" />
@@ -721,6 +867,13 @@ export const PurchasesView: React.FC = () => {
         maxWidthClass="max-w-3xl"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+          {formError && (
+            <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs font-bold text-red-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <span>{formError}</span>
+            </div>
+          )}
+
           {draftSourceLabel && (
             <div className="rounded-xl bg-[#FBF8F4] border border-[#E6D5C3] px-3.5 py-2.5 text-xs text-[#7B5836] flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-[#A67C52] shrink-0 mt-0.5" />
@@ -805,14 +958,14 @@ export const PurchasesView: React.FC = () => {
 
             {lines.map((line, idx) => {
               const currencySymbol = CURRENCIES[state.currency]?.symbol || 'ج.م';
-              const unitLabel =
-                line.itemType === 'fabric'
-                  ? FABRIC_UNIT_LABELS[
-                      state.fabrics.find((f) => f.id === line.refId)?.unit || 'meter'
-                    ]
-                  : PURCHASE_UNIT_LABELS[
-                      state.trims.find((t) => t.id === line.refId)?.purchaseUnit || 'piece'
-                    ];
+              const isFabric = line.itemType === 'fabric';
+              const unitLabel = isFabric
+                ? FABRIC_UNIT_LABELS[
+                    state.fabrics.find((f) => f.id === line.refId)?.unit || 'meter'
+                  ]
+                : PURCHASE_UNIT_LABELS[
+                    state.trims.find((t) => t.id === line.refId)?.purchaseUnit || 'piece'
+                  ];
               const alloc = poCalc.allocations[idx] || {
                 baseLineTotal: (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0),
                 shippingAllocated: 0,
@@ -830,16 +983,15 @@ export const PurchasesView: React.FC = () => {
                     {/* Item Selector */}
                     <div className="sm:col-span-4">
                       <label className="block text-[11px] font-bold text-[#4B4A46] mb-1">
-                        {line.itemType === 'fabric' ? 'الصنف (قماش)' : 'الصنف (كلفة / عبوة)'}
+                        {isFabric ? 'الصنف (قماش)' : 'الصنف (كلفة / عبوة)'}
                       </label>
                       <select
                         value={line.refId}
                         onChange={(e) => {
                           const id = e.target.value;
-                          const price =
-                            line.itemType === 'fabric'
-                              ? state.fabrics.find((f) => f.id === id)?.pricePerUnit || 0
-                              : state.trims.find((t) => t.id === id)?.packPrice || 0;
+                          const price = isFabric
+                            ? state.fabrics.find((f) => f.id === id)?.pricePerUnit || 0
+                            : state.trims.find((t) => t.id === id)?.packPrice || 0;
                           setLines((prev) =>
                             prev.map((l, i) =>
                               i === idx ? { ...l, refId: id, unitPrice: price } : l
@@ -848,7 +1000,7 @@ export const PurchasesView: React.FC = () => {
                         }}
                         className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-2 text-xs font-medium text-[#1A1A1E] focus:outline-none focus:border-[#A67C52]"
                       >
-                        {line.itemType === 'fabric'
+                        {isFabric
                           ? state.fabrics.map((f) => (
                               <option key={f.id} value={f.id}>
                                 {f.name} ({FABRIC_UNIT_LABELS[f.unit]})
@@ -866,31 +1018,44 @@ export const PurchasesView: React.FC = () => {
                     <div className="sm:col-span-3">
                       <label className="block text-[11px] font-bold text-[#1A1A1E] mb-1">
                         الكمية ({unitLabel})
+                        {isFabric && (
+                          <span className="text-[10px] font-normal text-[#6E6C66] mr-1">
+                            (يقبل كسور)
+                          </span>
+                        )}
                       </label>
                       <div className="relative flex items-center">
                         <input
                           type="number"
-                          min="1"
-                          step="1"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          value={line.quantity || ''}
-                          onKeyDown={blockNonIntegerKey}
-                          onChange={(e) =>
+                          min={isFabric ? '0.01' : '1'}
+                          step={isFabric ? 'any' : '1'}
+                          inputMode={isFabric ? 'decimal' : 'numeric'}
+                          pattern={isFabric ? undefined : '[0-9]*'}
+                          value={line.qtyText !== undefined ? line.qtyText : line.quantity || ''}
+                          onKeyDown={isFabric ? blockInvalidDecimalKey : blockNonIntegerKey}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const parsed = isFabric
+                              ? toDecimalQty(raw, 0, 3)
+                              : toWholeQty(raw, 0);
                             setLines((prev) =>
                               prev.map((l, i) =>
-                                i === idx ? { ...l, quantity: toWholeQty(e.target.value, 0) } : l
+                                i === idx ? { ...l, quantity: parsed, qtyText: raw } : l
                               )
-                            )
-                          }
+                            );
+                          }}
                           onBlur={() =>
                             setLines((prev) =>
-                              prev.map((l, i) =>
-                                i === idx ? { ...l, quantity: toWholeQty(l.quantity, 1) } : l
-                              )
+                              prev.map((l, i) => {
+                                if (i !== idx) return l;
+                                const finalized = isFabric
+                                  ? toDecimalQty(l.quantity, 0.01, 3)
+                                  : toWholeQty(l.quantity, 1);
+                                return { ...l, quantity: finalized, qtyText: String(finalized) };
+                              })
                             )
                           }
-                          placeholder="عدد صحيح"
+                          placeholder={isFabric ? 'مثال: 4.5' : 'عدد صحيح'}
                           aria-label={`الكمية (${unitLabel})`}
                           className="w-full rounded-lg border border-[#E5E3DD] bg-white pr-2.5 pl-12 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums focus:outline-none focus:border-[#1A1A1E]"
                         />
