@@ -1,12 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDownLeft,
+  ArrowLeftRight,
+  ArrowUpRight,
   BarChart3,
+  BookOpen,
   Download,
   Factory,
   Layers,
   Package,
   Printer,
+  Search,
   TrendingUp,
   Users,
 } from 'lucide-react';
@@ -31,14 +36,38 @@ import {
   getTrimUnitCost,
 } from '../../utils/calculations';
 
-type ReportTab = 'profitability' | 'stock' | 'procurement' | 'customers';
+type ReportTab =
+  | 'profitability'
+  | 'stock'
+  | 'movements'
+  | 'cash_statement'
+  | 'procurement'
+  | 'customers';
 type PeriodFilter = 'all' | 'this_month' | 'last_3m' | 'this_year' | 'custom';
 type StockStatusFilter = 'all' | 'low' | 'out' | 'ok';
+type MovementItemFilter = 'all' | 'fabric' | 'trim' | 'finished_good';
+type DirectionFilter = 'all' | 'in' | 'out';
+type CashCategoryFilter = 'all' | 'capital' | 'sales' | 'expense_op' | 'expense_raw';
 
 const SUPPLY_GROUP_LABELS: Record<TrimSupplyGroup, string> = {
   trims: 'كلف وإكسسوارات',
   manufacturing: 'مستلزمات تصنيع',
   brand: 'مستلزمات براند',
+};
+
+const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+  purchase_in: 'وارد مشتريات',
+  production_issue: 'صرف للتصنيع',
+  production_in: 'إنتاج تام وارد',
+  sale_out: 'منصرف مبيعات',
+  sale_return: 'مرتجع / إلغاء بيع',
+  adjustment: 'تسوية / رصيد افتتاحي',
+};
+
+const ITEM_TYPE_LABELS: Record<'fabric' | 'trim' | 'finished_good', string> = {
+  fabric: 'قماش',
+  trim: 'كلفة / مستلزمات',
+  finished_good: 'منتج تام',
 };
 
 function getPeriodBounds(
@@ -93,6 +122,16 @@ export const ReportsView: React.FC = () => {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [stockFilter, setStockFilter] = useState<StockStatusFilter>('all');
+
+  // Filters for Inventory Movements & Cash Account Statement
+  const [movItemType, setMovItemType] = useState<MovementItemFilter>('all');
+  const [movDirection, setMovDirection] = useState<DirectionFilter>('all');
+  const [movItemKey, setMovItemKey] = useState<string>('');
+  const [movSearch, setMovSearch] = useState('');
+
+  const [cashDirection, setCashDirection] = useState<DirectionFilter>('all');
+  const [cashCategory, setCashCategory] = useState<CashCategoryFilter>('all');
+  const [cashSearch, setCashSearch] = useState('');
 
   const bounds = useMemo(
     () => getPeriodBounds(period, customFrom, customTo),
@@ -594,6 +633,275 @@ export const ReportsView: React.FC = () => {
     };
   }, [state.salesOrders, state.customers, bounds]);
 
+  // 5) Inventory Movements Log & Stock Card (سجل حركة المخزون)
+  const movementsReport = useMemo(() => {
+    const fabricMap = new Map(state.fabrics.map((f) => [f.id, f]));
+    const trimMap = new Map(state.trims.map((t) => [t.id, t]));
+
+    const itemOptions: { key: string; label: string; itemType: 'fabric' | 'trim' | 'finished_good' }[] = [];
+    for (const f of state.fabrics) {
+      itemOptions.push({ key: `fabric:${f.id}`, label: `قماش: ${f.name}`, itemType: 'fabric' });
+    }
+    for (const t of state.trims) {
+      itemOptions.push({ key: `trim:${t.id}`, label: `كلفة/مستلزم: ${t.name}`, itemType: 'trim' });
+    }
+    for (const [vid, meta] of variantLookup.entries()) {
+      itemOptions.push({
+        key: `finished_good:${vid}`,
+        label: `منتج تام: ${meta.modelName} (${meta.color} - ${meta.size})`,
+        itemType: 'finished_good',
+      });
+    }
+
+    const enriched = state.inventoryMovements.map((mv) => {
+      let itemName = 'صنف غير محدد';
+      let unitLabel = 'وحدة';
+      let itemKey = '';
+
+      if (mv.itemType === 'fabric' && mv.fabricId) {
+        const fab = fabricMap.get(mv.fabricId);
+        itemName = fab?.name || 'قماش محذوف';
+        unitLabel = fab ? FABRIC_UNIT_LABELS[fab.unit] : 'متر';
+        itemKey = `fabric:${mv.fabricId}`;
+      } else if (mv.itemType === 'trim' && mv.trimId) {
+        const tr = trimMap.get(mv.trimId);
+        itemName = tr?.name || 'كلفة محذوفة';
+        unitLabel = tr?.unitLabel || 'قطعة';
+        itemKey = `trim:${mv.trimId}`;
+      } else if (mv.itemType === 'finished_good' && mv.variantId) {
+        const meta = variantLookup.get(mv.variantId);
+        itemName = meta ? `${meta.modelName} (${meta.color} - ${meta.size})` : 'منتج تام محذوف';
+        unitLabel = 'قطعة';
+        itemKey = `finished_good:${mv.variantId}`;
+      }
+
+      const qtyDelta = Number(mv.qtyDelta) || 0;
+      const unitCost = Number(mv.unitCost) || 0;
+      const valueDelta = qtyDelta * unitCost;
+      const dateStr = (mv.createdAt || '').slice(0, 10);
+
+      return {
+        ...mv,
+        itemKey,
+        itemName,
+        unitLabel,
+        qtyDelta,
+        unitCost,
+        valueDelta,
+        dateStr,
+        typeLabel: MOVEMENT_TYPE_LABELS[mv.movementType] || mv.movementType,
+      };
+    });
+
+    const q = movSearch.trim().toLowerCase();
+    const filtered = enriched.filter((r) => {
+      if (!inDateRange(r.createdAt, bounds.from, bounds.to)) return false;
+      if (movItemType !== 'all' && r.itemType !== movItemType) return false;
+      if (movItemKey && r.itemKey !== movItemKey) return false;
+      if (movDirection === 'in' && r.qtyDelta <= 0) return false;
+      if (movDirection === 'out' && r.qtyDelta >= 0) return false;
+      if (q) {
+        const hay = `${r.itemName} ${r.typeLabel} ${r.notes || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    let totalInCount = 0;
+    let totalInQty = 0;
+    let totalInValue = 0;
+    let totalOutCount = 0;
+    let totalOutQty = 0;
+    let totalOutValue = 0;
+
+    for (const r of filtered) {
+      if (r.qtyDelta >= 0) {
+        totalInCount += 1;
+        totalInQty += r.qtyDelta;
+        totalInValue += Math.abs(r.valueDelta);
+      } else {
+        totalOutCount += 1;
+        totalOutQty += Math.abs(r.qtyDelta);
+        totalOutValue += Math.abs(r.valueDelta);
+      }
+    }
+
+    // Current stock if a specific item is selected (Stock Card mode)
+    let selectedItemCurrentStock: { qty: number; unit: string; name: string } | null = null;
+    if (movItemKey) {
+      const [kind, id] = movItemKey.split(':');
+      if (kind === 'fabric') {
+        const f = fabricMap.get(id);
+        if (f) selectedItemCurrentStock = { qty: f.stockQty, unit: FABRIC_UNIT_LABELS[f.unit], name: f.name };
+      } else if (kind === 'trim') {
+        const t = trimMap.get(id);
+        if (t) selectedItemCurrentStock = { qty: t.stockQty, unit: t.unitLabel || 'قطعة', name: t.name };
+      } else if (kind === 'finished_good') {
+        for (const m of state.models) {
+          const v = (m.variants || []).find((x) => x.id === id);
+          if (v) {
+            selectedItemCurrentStock = {
+              qty: v.finishedGoodsQty,
+              unit: 'قطعة',
+              name: `${m.name} (${v.color} - ${v.size})`,
+            };
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      rows: filtered,
+      allRows: enriched,
+      itemOptions,
+      totalInCount,
+      totalInQty,
+      totalInValue,
+      totalOutCount,
+      totalOutQty,
+      totalOutValue,
+      netQty: totalInQty - totalOutQty,
+      netValue: totalInValue - totalOutValue,
+      selectedItemCurrentStock,
+    };
+  }, [
+    state.inventoryMovements,
+    state.fabrics,
+    state.trims,
+    state.models,
+    variantLookup,
+    bounds,
+    movItemType,
+    movItemKey,
+    movDirection,
+    movSearch,
+  ]);
+
+  // 6) Cash / Financial Account Statement Ledger (كشف حساب حركة الأموال)
+  const cashStatement = useMemo(() => {
+    interface RawCashEntry {
+      id: string;
+      date: string;
+      categoryKey: 'capital' | 'sales' | 'expense_op' | 'expense_raw';
+      categoryLabel: string;
+      description: string;
+      reference: string;
+      method: string;
+      inflow: number;
+      outflow: number;
+    }
+
+    const entries: RawCashEntry[] = [];
+
+    // 1. Partner Capital Contributions (+)
+    for (const p of state.partnerContributions) {
+      if ((Number(p.amount) || 0) <= 0) continue;
+      entries.push({
+        id: `cap-${p.id}`,
+        date: (p.contributionDate || '').slice(0, 10) || '1970-01-01',
+        categoryKey: 'capital',
+        categoryLabel: 'رأس مال شريك',
+        description: `مساهمة شريك: ${p.partnerName}${p.notes ? ` — ${p.notes}` : ''}`,
+        reference: 'رأس مال',
+        method: 'إيداع بالخزنة',
+        inflow: Number(p.amount) || 0,
+        outflow: 0,
+      });
+    }
+
+    // 2. Customer Sales Collections (+)
+    for (const o of state.salesOrders) {
+      if (o.status === 'cancelled') continue;
+      const paid = Number(o.paidAmount) || 0;
+      if (paid <= 0) continue;
+      entries.push({
+        id: `sale-${o.id}`,
+        date: (o.orderDate || '').slice(0, 10) || '1970-01-01',
+        categoryKey: 'sales',
+        categoryLabel: 'تحصيل مبيعات',
+        description: `تحصيل طلب ${o.orderNumber} — ${o.customerName} (${o.platform || 'مباشر'})`,
+        reference: o.orderNumber,
+        method: o.paymentStatus,
+        inflow: paid,
+        outflow: 0,
+      });
+    }
+
+    // 3. Expenses & Workshop/Raw Material Cash Outflows (-)
+    for (const e of state.expenses) {
+      const amt = Number(e.amount) || 0;
+      if (amt <= 0) continue;
+      entries.push({
+        id: `exp-${e.id}`,
+        date: (e.expenseDate || '').slice(0, 10) || '1970-01-01',
+        categoryKey: e.isRawMaterialPurchase ? 'expense_raw' : 'expense_op',
+        categoryLabel: e.isRawMaterialPurchase ? 'مشتريات خامات' : `مصروف (${e.category})`,
+        description: `${e.title}${e.notes ? ` — ${e.notes}` : ''}`,
+        reference: e.category,
+        method: e.paymentMethod || 'كاش',
+        inflow: 0,
+        outflow: amt,
+      });
+    }
+
+    // Sort chronologically ascending to compute accurate running balance
+    entries.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+
+    let running = 0;
+    let openingBalance = 0;
+    const withBalance: (RawCashEntry & { runningBalance: number })[] = [];
+
+    for (const item of entries) {
+      if (bounds.from && item.date < bounds.from) {
+        openingBalance += item.inflow - item.outflow;
+        running += item.inflow - item.outflow;
+        continue;
+      }
+      if (bounds.to && item.date > bounds.to) {
+        continue;
+      }
+      running += item.inflow - item.outflow;
+      withBalance.push({ ...item, runningBalance: running });
+    }
+
+    const periodInflow = withBalance.reduce((s, r) => s + r.inflow, 0);
+    const periodOutflow = withBalance.reduce((s, r) => s + r.outflow, 0);
+    const closingBalance = openingBalance + periodInflow - periodOutflow;
+
+    const q = cashSearch.trim().toLowerCase();
+    const visibleRows = withBalance
+      .filter((r) => {
+        if (cashDirection === 'in' && r.inflow <= 0) return false;
+        if (cashDirection === 'out' && r.outflow <= 0) return false;
+        if (cashCategory !== 'all' && r.categoryKey !== cashCategory) return false;
+        if (q) {
+          const hay = `${r.description} ${r.categoryLabel} ${r.reference} ${r.method}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      })
+      .reverse(); // Show newest first while preserving true chronological running balance
+
+    return {
+      openingBalance,
+      periodInflow,
+      periodOutflow,
+      netChange: periodInflow - periodOutflow,
+      closingBalance,
+      rows: visibleRows,
+      allPeriodRows: withBalance,
+    };
+  }, [
+    state.partnerContributions,
+    state.salesOrders,
+    state.expenses,
+    bounds,
+    cashDirection,
+    cashCategory,
+    cashSearch,
+  ]);
+
   // Multi-Sheet Excel Export
   const handleExportReportsExcel = () => {
     const wb = XLSX.utils.book_new();
@@ -661,7 +969,39 @@ export const ReportsView: React.FC = () => {
     );
     XLSX.utils.book_append_sheet(wb, fgSheet, 'مخزون المنتج التام');
 
-    // Sheet 5: Customers & Receivables
+    // Sheet 5: Inventory Movements Log
+    const movSheet = XLSX.utils.json_to_sheet(
+      movementsReport.rows.map((m) => ({
+        'التاريخ': m.dateStr,
+        'النوع': ITEM_TYPE_LABELS[m.itemType],
+        'الصنف': m.itemName,
+        'الحركة': m.typeLabel,
+        'وارد (+)': m.qtyDelta > 0 ? m.qtyDelta : 0,
+        'منصرف (-)': m.qtyDelta < 0 ? Math.abs(m.qtyDelta) : 0,
+        'الوحدة': m.unitLabel,
+        'تكلفة الوحدة': Number(m.unitCost.toFixed(2)),
+        'القيمة': Number(m.valueDelta.toFixed(2)),
+        'ملاحظات': m.notes || '',
+      }))
+    );
+    XLSX.utils.book_append_sheet(wb, movSheet, 'سجل حركة المخزون');
+
+    // Sheet 6: Cash Account Statement (Ledger)
+    const cashSheet = XLSX.utils.json_to_sheet(
+      cashStatement.allPeriodRows.map((c) => ({
+        'التاريخ': c.date,
+        'التصنيف': c.categoryLabel,
+        'البيان': c.description,
+        'المرجع': c.reference,
+        'الطريقة': c.method,
+        'وارد / زيادة (+)': Number(c.inflow.toFixed(2)),
+        'منصرف / نقص (-)': Number(c.outflow.toFixed(2)),
+        'الرصيد التراكمي': Number(c.runningBalance.toFixed(2)),
+      }))
+    );
+    XLSX.utils.book_append_sheet(wb, cashSheet, 'كشف حساب الأموال');
+
+    // Sheet 7: Customers & Receivables
     const custSheet = XLSX.utils.json_to_sheet(
       customersReport.topCustomers.map((c) => ({
         'العميل': c.name,
@@ -687,7 +1027,9 @@ export const ReportsView: React.FC = () => {
             {(
               [
                 { id: 'profitability', label: 'تقرير الربحية (P&L)', icon: TrendingUp },
-                { id: 'stock', label: 'مخزون الخامات والتقييم', icon: Layers },
+                { id: 'stock', label: 'تقييم المخزون', icon: Layers },
+                { id: 'movements', label: 'سجل حركة المخزون', icon: ArrowLeftRight },
+                { id: 'cash_statement', label: 'كشف حساب الأموال', icon: BookOpen },
                 { id: 'procurement', label: 'المشتريات والورش', icon: Factory },
                 { id: 'customers', label: 'العملاء والذمم', icon: Users },
               ] as const
@@ -1565,6 +1907,472 @@ export const ReportsView: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== TAB 5: INVENTORY MOVEMENTS LOG (سجل حركة المخزون) ===================== */}
+      {reportTab === 'movements' && (
+        <div className="space-y-5">
+          {/* KPI Strip */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
+                <ArrowDownLeft className="w-3.5 h-3.5" />
+                <span>إجمالي الوارد / الزيادة (+)</span>
+              </div>
+              <div className="text-lg font-extrabold text-emerald-700 tabular-nums mt-1">
+                +{formatNumber(movementsReport.totalInQty, 1)}
+              </div>
+              <div className="text-[11px] text-[#6E6C66] mt-1 tabular-nums">
+                {movementsReport.totalInCount} حركة • قيمة{' '}
+                {formatMoney(movementsReport.totalInValue, state.currency)}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-red-700">
+                <ArrowUpRight className="w-3.5 h-3.5" />
+                <span>إجمالي المنصرف / النقص (-)</span>
+              </div>
+              <div className="text-lg font-extrabold text-red-700 tabular-nums mt-1">
+                -{formatNumber(movementsReport.totalOutQty, 1)}
+              </div>
+              <div className="text-[11px] text-[#6E6C66] mt-1 tabular-nums">
+                {movementsReport.totalOutCount} حركة • قيمة{' '}
+                {formatMoney(movementsReport.totalOutValue, state.currency)}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
+              <div className="text-[11px] font-semibold text-[#6E6C66]">
+                صافي تغيّر الكمية بالفترة
+              </div>
+              <div
+                className={`text-lg font-extrabold tabular-nums mt-1 ${
+                  movementsReport.netQty >= 0 ? 'text-emerald-700' : 'text-red-700'
+                }`}
+              >
+                {movementsReport.netQty >= 0 ? '+' : ''}
+                {formatNumber(movementsReport.netQty, 1)}
+              </div>
+              <div className="text-[11px] text-[#6E6C66] mt-1 tabular-nums">
+                صافي القيمة: {movementsReport.netValue >= 0 ? '+' : ''}
+                {formatMoney(movementsReport.netValue, state.currency)}
+              </div>
+            </div>
+
+            <div className="bg-[#1A1A1E] text-white rounded-2xl border border-[#1A1A1E] p-4">
+              <div className="text-[11px] font-semibold text-[#D4B896]">
+                {movementsReport.selectedItemCurrentStock
+                  ? 'الرصيد الحالي للصنف (كارت صنف)'
+                  : 'إجمالي حركات المخزون'}
+              </div>
+              {movementsReport.selectedItemCurrentStock ? (
+                <>
+                  <div className="text-lg font-extrabold text-[#BD956D] tabular-nums mt-1">
+                    {formatNumber(movementsReport.selectedItemCurrentStock.qty, 1)}{' '}
+                    {movementsReport.selectedItemCurrentStock.unit}
+                  </div>
+                  <div className="text-[11px] text-[#B4B2AA] mt-1 truncate">
+                    {movementsReport.selectedItemCurrentStock.name}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-lg font-extrabold text-[#BD956D] tabular-nums mt-1">
+                    {movementsReport.rows.length} حركة
+                  </div>
+                  <div className="text-[11px] text-[#B4B2AA] mt-1">
+                    اختر صنفاً محدداً لعرض كارت الصنف
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 no-print">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-[#9C9990] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={movSearch}
+                  onChange={(e) => setMovSearch(e.target.value)}
+                  placeholder="بحث باسم الصنف أو رقم الأمر أو الملاحظات..."
+                  className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] pr-9 pl-3 py-2 text-xs focus:outline-none focus:border-[#A67C52]"
+                />
+              </div>
+
+              <select
+                value={movItemType}
+                onChange={(e) => {
+                  setMovItemType(e.target.value as MovementItemFilter);
+                  setMovItemKey('');
+                }}
+                className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="all">كل أنواع المخزون</option>
+                <option value="fabric">الأقمشة فقط</option>
+                <option value="trim">الكلف والمستلزمات فقط</option>
+                <option value="finished_good">المنتج التام فقط</option>
+              </select>
+
+              <select
+                value={movItemKey}
+                onChange={(e) => setMovItemKey(e.target.value)}
+                className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="">كارت صنف: كل الأصناف</option>
+                {movementsReport.itemOptions
+                  .filter((o) => movItemType === 'all' || o.itemType === movItemType)
+                  .map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.label}
+                    </option>
+                  ))}
+              </select>
+
+              <select
+                value={movDirection}
+                onChange={(e) => setMovDirection(e.target.value as DirectionFilter)}
+                className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="all">كل الحركات (زيادة ونقص)</option>
+                <option value="in">الزيادة / الوارد فقط (+)</option>
+                <option value="out">النقص / المنصرف فقط (-)</option>
+              </select>
+            </div>
+
+            {/* Desktop Table */}
+            <div className="hidden md:block overflow-x-auto rounded-xl border border-[#EAE8E2]">
+              <table className="w-full text-xs text-right">
+                <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
+                  <tr>
+                    <th className="py-2.5 px-3">التاريخ</th>
+                    <th className="py-2.5 px-3">القسم</th>
+                    <th className="py-2.5 px-3">الصنف</th>
+                    <th className="py-2.5 px-3">نوع الحركة</th>
+                    <th className="py-2.5 px-3 text-center">وارد / زيادة (+)</th>
+                    <th className="py-2.5 px-3 text-center">منصرف / نقص (-)</th>
+                    <th className="py-2.5 px-3">تكلفة الوحدة</th>
+                    <th className="py-2.5 px-3">القيمة</th>
+                    <th className="py-2.5 px-3">البيان / المرجع</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#F0EFEA]">
+                  {movementsReport.rows.map((mv) => {
+                    const isIn = mv.qtyDelta >= 0;
+                    return (
+                      <tr key={mv.id} className="hover:bg-[#FAF9F7]">
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-[#6E6C66] whitespace-nowrap">
+                          {mv.dateStr}
+                        </td>
+                        <td className="py-2.5 px-3 text-[11px] font-semibold text-[#8E6742] whitespace-nowrap">
+                          {ITEM_TYPE_LABELS[mv.itemType]}
+                        </td>
+                        <td className="py-2.5 px-3 font-bold text-[#1A1A1E]">{mv.itemName}</td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              isIn
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-red-50 text-red-700'
+                            }`}
+                          >
+                            {mv.typeLabel}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-extrabold text-emerald-700 tabular-nums">
+                          {isIn ? `+${formatNumber(mv.qtyDelta, 1)} ${mv.unitLabel}` : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-extrabold text-red-700 tabular-nums">
+                          {!isIn ? `-${formatNumber(Math.abs(mv.qtyDelta), 1)} ${mv.unitLabel}` : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 tabular-nums text-[#6E6C66]">
+                          {formatMoney(mv.unitCost, state.currency)}
+                        </td>
+                        <td
+                          className={`py-2.5 px-3 font-bold tabular-nums whitespace-nowrap ${
+                            isIn ? 'text-emerald-700' : 'text-red-700'
+                          }`}
+                        >
+                          {isIn ? '+' : '-'}
+                          {formatMoney(Math.abs(mv.valueDelta), state.currency)}
+                        </td>
+                        <td className="py-2.5 px-3 text-[#4B4A46]">{mv.notes || '—'}</td>
+                      </tr>
+                    );
+                  })}
+                  {movementsReport.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-[#6E6C66]">
+                        لا توجد حركات مخزون مطابقة للفترة أو معايير التصفية الحالية.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Cards */}
+            <div className="md:hidden space-y-2.5">
+              {movementsReport.rows.map((mv) => {
+                const isIn = mv.qtyDelta >= 0;
+                return (
+                  <div
+                    key={mv.id}
+                    className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 space-y-1.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-[#1A1A1E] truncate">
+                          {mv.itemName}
+                        </div>
+                        <div className="text-[10px] text-[#6E6C66]">
+                          {ITEM_TYPE_LABELS[mv.itemType]} • {mv.dateStr}
+                        </div>
+                      </div>
+                      <span
+                        className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-extrabold tabular-nums ${
+                          isIn ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {isIn ? '+' : '-'}
+                        {formatNumber(Math.abs(mv.qtyDelta), 1)} {mv.unitLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] pt-1 border-t border-[#EAE8E2]">
+                      <span className="text-[#4B4A46] truncate">{mv.notes || mv.typeLabel}</span>
+                      <span
+                        className={`font-bold tabular-nums shrink-0 ${
+                          isIn ? 'text-emerald-700' : 'text-red-700'
+                        }`}
+                      >
+                        {isIn ? '+' : '-'}
+                        {formatMoney(Math.abs(mv.valueDelta), state.currency)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {movementsReport.rows.length === 0 && (
+                <div className="py-8 text-center text-xs text-[#6E6C66]">
+                  لا توجد حركات مخزون مطابقة.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================== TAB 6: CASH ACCOUNT STATEMENT LEDGER (كشف حساب حركة الأموال) ===================== */}
+      {reportTab === 'cash_statement' && (
+        <div className="space-y-5">
+          {/* Cash Statement Summary KPIs */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
+              <div className="text-[11px] font-semibold text-[#6E6C66]">الرصيد الافتتاحي للفترة</div>
+              <div className="text-lg font-extrabold text-[#1A1A1E] tabular-nums mt-1">
+                {formatMoney(cashStatement.openingBalance, state.currency)}
+              </div>
+              <div className="text-[10px] text-[#6E6C66] mt-1">
+                {bounds.from ? `قبل ${bounds.from}` : 'بداية النشاط'}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
+              <div className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                <ArrowDownLeft className="w-3.5 h-3.5" />
+                <span>إجمالي الوارد / الإيداعات (+)</span>
+              </div>
+              <div className="text-lg font-extrabold text-emerald-700 tabular-nums mt-1">
+                +{formatMoney(cashStatement.periodInflow, state.currency)}
+              </div>
+              <div className="text-[10px] text-[#6E6C66] mt-1">رأس مال + تحصيلات مبيعات</div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
+              <div className="flex items-center gap-1 text-[11px] font-semibold text-red-700">
+                <ArrowUpRight className="w-3.5 h-3.5" />
+                <span>إجمالي المنصرف / المسحوبات (-)</span>
+              </div>
+              <div className="text-lg font-extrabold text-red-700 tabular-nums mt-1">
+                -{formatMoney(cashStatement.periodOutflow, state.currency)}
+              </div>
+              <div className="text-[10px] text-[#6E6C66] mt-1">مصروفات + خامات + دفعات ورش</div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4">
+              <div className="text-[11px] font-semibold text-[#6E6C66]">صافي الحركة بالفترة</div>
+              <div
+                className={`text-lg font-extrabold tabular-nums mt-1 ${
+                  cashStatement.netChange >= 0 ? 'text-emerald-700' : 'text-red-700'
+                }`}
+              >
+                {cashStatement.netChange >= 0 ? '+' : ''}
+                {formatMoney(cashStatement.netChange, state.currency)}
+              </div>
+              <div className="text-[10px] text-[#6E6C66] mt-1">
+                {cashStatement.allPeriodRows.length} حركة مالية
+              </div>
+            </div>
+
+            <div className="col-span-2 lg:col-span-1 bg-[#1A1A1E] text-white rounded-2xl border border-[#1A1A1E] p-4">
+              <div className="text-[11px] font-semibold text-[#D4B896]">
+                الرصيد الختامي (المتاح بالخزنة)
+              </div>
+              <div className="text-lg font-extrabold text-[#BD956D] tabular-nums mt-1">
+                {formatMoney(cashStatement.closingBalance, state.currency)}
+              </div>
+              <div className="text-[10px] text-[#B4B2AA] mt-1">مطابق لرصيد الخزنة الفعلي</div>
+            </div>
+          </div>
+
+          {/* Cash Ledger Filters + Table */}
+          <div className="bg-white rounded-2xl border border-[#E5E3DD] p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 no-print">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-[#9C9990] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={cashSearch}
+                  onChange={(e) => setCashSearch(e.target.value)}
+                  placeholder="بحث بالبيان، اسم العميل، الشريك، أو المصروف..."
+                  className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] pr-9 pl-3 py-2 text-xs focus:outline-none focus:border-[#A67C52]"
+                />
+              </div>
+
+              <select
+                value={cashCategory}
+                onChange={(e) => setCashCategory(e.target.value as CashCategoryFilter)}
+                className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="all">كل أنواع الحركات المالية</option>
+                <option value="capital">رأس مال الشركاء (+)</option>
+                <option value="sales">تحصيلات المبيعات (+)</option>
+                <option value="expense_op">المصروفات التشغيلية والورش (-)</option>
+                <option value="expense_raw">مشتريات الخامات (-)</option>
+              </select>
+
+              <select
+                value={cashDirection}
+                onChange={(e) => setCashDirection(e.target.value as DirectionFilter)}
+                className="rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-[#A67C52]"
+              >
+                <option value="all">كل الاتجاهات (وارد ومنصرف)</option>
+                <option value="in">الوارد / الزيادة فقط (+)</option>
+                <option value="out">المنصرف / النقص فقط (-)</option>
+              </select>
+            </div>
+
+            {/* Desktop Account Statement Table */}
+            <div className="hidden md:block overflow-x-auto rounded-xl border border-[#EAE8E2]">
+              <table className="w-full text-xs text-right">
+                <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
+                  <tr>
+                    <th className="py-2.5 px-3">التاريخ</th>
+                    <th className="py-2.5 px-3">التصنيف</th>
+                    <th className="py-2.5 px-3">البيان / تفاصيل الحركة</th>
+                    <th className="py-2.5 px-3">الطريقة</th>
+                    <th className="py-2.5 px-3 text-center">وارد (+)</th>
+                    <th className="py-2.5 px-3 text-center">منصرف (-)</th>
+                    <th className="py-2.5 px-4">الرصيد التراكمي</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#F0EFEA]">
+                  {cashStatement.rows.map((row) => (
+                    <tr key={row.id} className="hover:bg-[#FAF9F7]">
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-[#6E6C66] whitespace-nowrap">
+                        {row.date}
+                      </td>
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            row.inflow > 0
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : row.categoryKey === 'expense_raw'
+                                ? 'bg-[#F6EFE7] text-[#8E6742]'
+                                : 'bg-red-50 text-red-700'
+                          }`}
+                        >
+                          {row.categoryLabel}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 font-semibold text-[#1A1A1E]">
+                        {row.description}
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] text-[#6E6C66] whitespace-nowrap">
+                        {row.method}
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-extrabold text-emerald-700 tabular-nums whitespace-nowrap">
+                        {row.inflow > 0 ? `+${formatMoney(row.inflow, state.currency)}` : '—'}
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-extrabold text-red-700 tabular-nums whitespace-nowrap">
+                        {row.outflow > 0 ? `-${formatMoney(row.outflow, state.currency)}` : '—'}
+                      </td>
+                      <td
+                        className={`py-2.5 px-4 font-extrabold tabular-nums whitespace-nowrap ${
+                          row.runningBalance >= 0 ? 'text-[#1A1A1E]' : 'text-red-700'
+                        }`}
+                      >
+                        {formatMoney(row.runningBalance, state.currency)}
+                      </td>
+                    </tr>
+                  ))}
+                  {cashStatement.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-[#6E6C66]">
+                        لا توجد حركات مالية مطابقة للفترة أو معايير التصفية الحالية.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Cards */}
+            <div className="md:hidden space-y-2.5">
+              {cashStatement.rows.map((row) => {
+                const isIn = row.inflow > 0;
+                return (
+                  <div
+                    key={row.id}
+                    className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 space-y-1.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-[#1A1A1E]">{row.description}</div>
+                        <div className="text-[10px] text-[#6E6C66]">
+                          {row.categoryLabel} • {row.date} • {row.method}
+                        </div>
+                      </div>
+                      <span
+                        className={`shrink-0 text-xs font-extrabold tabular-nums ${
+                          isIn ? 'text-emerald-700' : 'text-red-700'
+                        }`}
+                      >
+                        {isIn
+                          ? `+${formatMoney(row.inflow, state.currency)}`
+                          : `-${formatMoney(row.outflow, state.currency)}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] pt-1 border-t border-[#EAE8E2]">
+                      <span className="text-[#6E6C66]">الرصيد بعد الحركة</span>
+                      <span className="font-extrabold text-[#1A1A1E] tabular-nums">
+                        {formatMoney(row.runningBalance, state.currency)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {cashStatement.rows.length === 0 && (
+                <div className="py-8 text-center text-xs text-[#6E6C66]">
+                  لا توجد حركات مالية مطابقة.
+                </div>
+              )}
             </div>
           </div>
         </div>

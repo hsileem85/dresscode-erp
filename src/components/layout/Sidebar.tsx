@@ -128,7 +128,7 @@ const NAV_SECTIONS: { title?: string; items: NavItem[] }[] = [
       {
         id: 'reports',
         label: 'التقارير التحليلية',
-        sublabel: 'الربحية، المخزون، الموردين والذمم',
+        sublabel: 'الربحية، حركة المخزون وكشف الأموال',
         icon: BarChart3,
       },
       {

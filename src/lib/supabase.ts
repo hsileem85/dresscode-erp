@@ -121,7 +121,7 @@ export async function fetchFullERPState(): Promise<{
       .from('inventory_movements')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(80),
+      .limit(500),
   ]);
 
   // Gracefully detect if Migration 003 hasn't been executed yet in Supabase
