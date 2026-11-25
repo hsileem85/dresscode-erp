@@ -41,6 +41,31 @@ export const supabase: SupabaseClient | null = isSupabaseConfigured
   ? createClient(supabaseUrl!, supabaseKey!)
   : null;
 
+export const INTERNAL_USERNAME_DOMAIN = 'erp.dresscode-clothing.com';
+
+export function resolveAuthIdentifier(raw: string): string {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return '';
+  if (trimmed.includes('@')) return trimmed;
+  const cleanUser = trimmed.replace(/\s+/g, '');
+  return `${cleanUser}@${INTERNAL_USERNAME_DOMAIN}`;
+}
+
+export function isInternalUsernameEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return email.trim().toLowerCase().endsWith(`@${INTERNAL_USERNAME_DOMAIN}`);
+}
+
+export function formatDisplayIdentifier(email?: string | null): string {
+  if (!email) return '';
+  const trimmed = email.trim();
+  const suffix = `@${INTERNAL_USERNAME_DOMAIN}`;
+  if (trimmed.toLowerCase().endsWith(suffix)) {
+    return trimmed.slice(0, trimmed.length - suffix.length);
+  }
+  return trimmed;
+}
+
 export function newUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -2161,13 +2186,13 @@ export const erpDb = {
   },
 
   async upsertUserRole(email: string, role: UserRole, displayName = ''): Promise<void> {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) throw new Error('البريد الإلكتروني مطلوب');
+    const cleanEmail = resolveAuthIdentifier(email);
+    if (!cleanEmail) throw new Error('اسم المستخدم أو البريد الإلكتروني مطلوب');
     const { error } = await db().from('user_roles').upsert(
       {
         email: cleanEmail,
         role,
-        display_name: displayName.trim() || null,
+        display_name: displayName.trim() || formatDisplayIdentifier(cleanEmail) || null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'email' }
@@ -2176,7 +2201,8 @@ export const erpDb = {
   },
 
   async deleteUserRole(email: string): Promise<void> {
-    const { error } = await db().from('user_roles').delete().eq('email', email.trim().toLowerCase());
+    const cleanEmail = resolveAuthIdentifier(email);
+    const { error } = await db().from('user_roles').delete().eq('email', cleanEmail);
     if (error) throw error;
   },
 };

@@ -19,7 +19,7 @@ import {
 import * as XLSX from 'xlsx';
 import { useConfirm } from '../common/ConfirmDialog';
 import { useERP } from '../../context/ERPContext';
-import { erpDb } from '../../lib/supabase';
+import { erpDb, formatDisplayIdentifier, resolveAuthIdentifier } from '../../lib/supabase';
 import type {
   AuditAction,
   AuditLogEntry,
@@ -215,11 +215,12 @@ export const AuditTrailView: React.FC = () => {
 
   const handleSaveRole = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanEmail = roleEmail.trim().toLowerCase();
-    if (!cleanEmail) return;
+    const resolvedEmail = resolveAuthIdentifier(roleEmail);
+    const displayId = formatDisplayIdentifier(resolvedEmail);
+    if (!resolvedEmail) return;
     if (
       user?.email &&
-      cleanEmail === user.email.trim().toLowerCase() &&
+      resolvedEmail === user.email.trim().toLowerCase() &&
       roleValue === 'staff'
     ) {
       const ok = await confirmAction({
@@ -234,12 +235,12 @@ export const AuditTrailView: React.FC = () => {
     setRoleSaving(true);
     setErrorMsg(null);
     try {
-      await erpDb.upsertUserRole(cleanEmail, roleValue, roleDisplayName);
+      await erpDb.upsertUserRole(resolvedEmail, roleValue, roleDisplayName);
       setRoleEmail('');
       setRoleDisplayName('');
       setRoleValue('staff');
       setFeedbackMsg(
-        `تم حفظ صلاحية ${cleanEmail} كـ «${roleValue === 'admin' ? 'مدير (Admin)' : 'مدخل بيانات (Staff)'}».`
+        `تم حفظ صلاحية ${displayId} كـ «${roleValue === 'admin' ? 'مدير (Admin)' : 'مدخل بيانات (Staff)'}».`
       );
       await loadData();
     } catch (err) {
@@ -250,9 +251,10 @@ export const AuditTrailView: React.FC = () => {
   };
 
   const handleDeleteRole = async (email: string) => {
+    const displayId = formatDisplayIdentifier(email);
     const ok = await confirmAction({
       title: 'إزالة قيد الصلاحية',
-      message: `هل تريد إزالة قيد الصلاحية للمستخدم (${email})؟ سيعود المستخدم غير المدرج إلى الصلاحية الافتراضية.`,
+      message: `هل تريد إزالة قيد الصلاحية للمستخدم (${displayId})؟ سيعود المستخدم غير المدرج إلى الصلاحية الافتراضية.`,
       confirmLabel: 'نعم، إزالة',
       tone: 'warning',
     });
@@ -261,7 +263,7 @@ export const AuditTrailView: React.FC = () => {
     setErrorMsg(null);
     try {
       await erpDb.deleteUserRole(email);
-      setFeedbackMsg(`تمت إزالة قيد الصلاحية للبريد ${email}.`);
+      setFeedbackMsg(`تمت إزالة قيد الصلاحية للمستخدم ${displayId}.`);
       await loadData();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'تعذّر إزالة الصلاحية');
@@ -618,12 +620,12 @@ export const AuditTrailView: React.FC = () => {
                 className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl p-3"
               >
                 <input
-                  type="email"
+                  type="text"
                   required
                   dir="ltr"
                   value={roleEmail}
                   onChange={(e) => setRoleEmail(e.target.value)}
-                  placeholder="staff@dresscode-clothing.com"
+                  placeholder="admin أو staff1 أو email@example.com"
                   className="sm:col-span-4 rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs text-left focus:outline-none focus:border-[#A67C52]"
                 />
                 <input
@@ -656,7 +658,7 @@ export const AuditTrailView: React.FC = () => {
                   <table className="w-full text-xs text-right">
                     <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
                       <tr>
-                        <th className="py-2.5 px-3">البريد الإلكتروني</th>
+                        <th className="py-2.5 px-3">اسم المستخدم / البريد</th>
                         <th className="py-2.5 px-3">الاسم</th>
                         <th className="py-2.5 px-3">الصلاحية</th>
                         <th className="py-2.5 px-3">إجراء</th>
@@ -666,7 +668,7 @@ export const AuditTrailView: React.FC = () => {
                       {roles.map((r) => (
                         <tr key={r.email} className="hover:bg-[#FAF9F7]">
                           <td className="py-2.5 px-3 font-mono font-semibold text-[#1A1A1E]" dir="ltr">
-                            {r.email}
+                            {formatDisplayIdentifier(r.email)}
                           </td>
                           <td className="py-2.5 px-3 text-[#4B4A46]">{r.displayName || '—'}</td>
                           <td className="py-2.5 px-3">
@@ -686,7 +688,7 @@ export const AuditTrailView: React.FC = () => {
                                 type="button"
                                 disabled={roleSaving}
                                 onClick={() => {
-                                  setRoleEmail(r.email);
+                                  setRoleEmail(formatDisplayIdentifier(r.email));
                                   setRoleDisplayName(r.displayName || '');
                                   setRoleValue(r.role === 'admin' ? 'staff' : 'admin');
                                 }}
@@ -847,12 +849,17 @@ export const AuditTrailView: React.FC = () => {
                         <div className="flex flex-wrap items-center gap-3 mt-1 text-[11px] text-[#6E6C66]">
                           <span className="inline-flex items-center gap-1 font-semibold text-[#8E6742]">
                             <UserIcon className="w-3 h-3" />
-                            <span>{entry.actorName}</span>
-                            {entry.actorEmail && entry.actorEmail !== entry.actorName && (
-                              <span className="text-[#6E6C66] font-normal">
-                                ({entry.actorEmail})
-                              </span>
-                            )}
+                            <span>{formatDisplayIdentifier(entry.actorName) || entry.actorName}</span>
+                            {(() => {
+                              const dispEmail = formatDisplayIdentifier(entry.actorEmail);
+                              const dispName = formatDisplayIdentifier(entry.actorName) || entry.actorName;
+                              if (!dispEmail || dispEmail === dispName) return null;
+                              return (
+                                <span className="text-[#6E6C66] font-normal">
+                                  ({dispEmail})
+                                </span>
+                              );
+                            })()}
                           </span>
                           <span className="tabular-nums">{formatDateTime(entry.occurredAt)}</span>
                           {fieldEntries.length > 0 && (

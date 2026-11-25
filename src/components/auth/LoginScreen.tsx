@@ -7,10 +7,10 @@ import {
   EyeOff,
   KeyRound,
   Lock,
-  Mail,
+  User,
   UserPlus,
 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import { resolveAuthIdentifier, supabase } from '../../lib/supabase';
 
 interface LoginScreenProps {
   recoveryMode?: boolean;
@@ -22,7 +22,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   onRecoveryDone,
 }) => {
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -70,13 +70,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       return 'تم تجاوز حد إرسال رسائل البريد الإلكتروني مؤقتاً (خطة Supabase المجانية تسمح برسالتين فقط في الساعة). انتظر قليلاً أو أنشئ/فعّل الحساب مباشرة من لوحة تحكم Supabase.';
     }
     if (lower.includes('already registered') || lower.includes('user already exists')) {
-      return 'هذا البريد الإلكتروني مسجّل بالفعل. انتقل إلى «تسجيل الدخول» أو استخدم «نسيت كلمة المرور؟».';
+      return 'اسم المستخدم أو البريد الإلكتروني مسجّل بالفعل. انتقل إلى «تسجيل الدخول».';
     }
     if (lower.includes('invalid login credentials')) {
-      return 'البريد الإلكتروني أو كلمة المرور غير صحيحة. إذا لم تنشئ حساباً بعد، اختر "إنشاء حساب جديد".';
+      return 'اسم المستخدم / البريد الإلكتروني أو كلمة المرور غير صحيحة.';
     }
     if (lower.includes('email not confirmed')) {
-      return 'يرجى تفعيل حسابك أولاً من خلال الضغط على رابط التفعيل المرسل إلى بريدك الإلكتروني (أو تفعيله من لوحة Supabase).';
+      return 'يرجى تفعيل الحساب أولاً (للحسابات باسم المستخدم مثل admin، نفّذ ملف 020_username_admin_account.sql أو فعّله من لوحة Supabase).';
     }
     return msg;
   };
@@ -84,12 +84,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
+    const rawId = identifier.trim();
+    if (!rawId) return;
+
+    const isPlainUsername = !rawId.includes('@');
+    const resolvedEmail = resolveAuthIdentifier(rawId);
+
     setLoading(true);
     setError(null);
     setInfo(null);
     try {
       if (mode === 'forgot') {
-        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        if (isPlainUsername) {
+          setError(
+            'استعادة كلمة المرور عبر البريد متاحة للحسابات المسجلة بإيميل حقيقي فقط. لتغيير كلمة مرور حساب باسم مستخدم (مثل admin)، أعد تشغيل ملف 020_username_admin_account.sql بكلمة المرور الجديدة أو عدّلها من لوحة Supabase.'
+          );
+          return;
+        }
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(resolvedEmail, {
           redirectTo: window.location.origin,
         });
         if (resetError) {
@@ -107,11 +119,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           setError('يجب أن تكون كلمة المرور 6 أحرف على الأقل.');
           return;
         }
+        const cleanDisplay = isPlainUsername ? rawId.toLowerCase().replace(/\s+/g, '') : rawId;
         const { data, error: signUpError } = await supabase.auth.signUp({
-          email: email.trim(),
+          email: resolvedEmail,
           password,
           options: {
             emailRedirectTo: window.location.origin,
+            data: isPlainUsername
+              ? { username: cleanDisplay, full_name: cleanDisplay }
+              : undefined,
           },
         });
         if (signUpError) {
@@ -122,12 +138,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           return;
         }
         setInfo(
-          'تم إنشاء الحساب بنجاح! افتح بريدك الإلكتروني واضغط على رابط التفعيل من Supabase، ثم عد وسجّل الدخول.'
+          isPlainUsername
+            ? `تم إنشاء حساب «${cleanDisplay}»! لأن الحساب بدون إيميل حقيقي، فعّله بنقرة واحدة من لوحة Supabase (Authentication → Users) أو عبر ملف 020_username_admin_account.sql ثم سجّل الدخول.`
+            : 'تم إنشاء الحساب بنجاح! افتح بريدك الإلكتروني واضغط على رابط التفعيل من Supabase، ثم عد وسجّل الدخول.'
         );
         setMode('signin');
       } else {
         const { error: authError } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: resolvedEmail,
           password,
         });
         if (authError) {
@@ -344,17 +362,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
-                    البريد الإلكتروني
+                    {mode === 'forgot'
+                      ? 'البريد الإلكتروني المسجّل'
+                      : 'اسم المستخدم أو البريد الإلكتروني'}
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-[#9C9990] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <User className="w-4 h-4 text-[#9C9990] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      type="email"
+                      type={mode === 'forgot' ? 'email' : 'text'}
                       required
+                      autoComplete="username"
                       dir="ltr"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="name@dresscode-clothing.com"
+                      value={identifier}
+                      onChange={(e) => setIdentifier(e.target.value)}
+                      placeholder={
+                        mode === 'forgot'
+                          ? 'name@example.com'
+                          : 'admin  أو  name@example.com'
+                      }
                       className="w-full rounded-xl border border-[#E5E3DD] bg-[#FAF9F7] pr-10 pl-3.5 py-2.5 text-sm text-left focus:outline-none focus:border-[#A67C52]"
                     />
                   </div>

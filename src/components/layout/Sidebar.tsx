@@ -22,7 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { useERP } from '../../context/ERPContext';
-import { isSupabaseConfigured } from '../../lib/supabase';
+import { formatDisplayIdentifier, isSupabaseConfigured } from '../../lib/supabase';
 import { CURRENCIES } from '../../types/erp';
 import type { CurrencyCode, NavTab } from '../../types/erp';
 
@@ -312,7 +312,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
                   </div>
                   {user?.email && (
                     <div className="text-[10px] text-[#9C9990] truncate" dir="ltr">
-                      {user.email}
+                      {formatDisplayIdentifier(user.email)}
                     </div>
                   )}
                 </div>
