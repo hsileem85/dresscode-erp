@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_LOOKUPS } from '../data/defaultLookups';
 import type {
+  AuditAction,
+  AuditLogEntry,
+  AuditLogStats,
   CurrencyCode,
   Customer,
   ERPState,
@@ -1863,5 +1866,155 @@ export const erpDb = {
 
     const { error: delErr } = await client.from('sales_orders').delete().eq('id', saleId);
     if (delErr) throw delErr;
+  },
+
+  async fetchAuditLogs(filters?: {
+    month?: string;
+    tableName?: string;
+    action?: AuditAction | '';
+    actorEmail?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ rows: AuditLogEntry[]; totalCount: number; missingMigration: boolean }> {
+    const client = db();
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+
+    let query = client
+      .from('audit_logs')
+      .select('*', { count: 'exact' })
+      .order('occurred_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (filters?.month) query = query.eq('log_month', filters.month);
+    if (filters?.tableName) query = query.eq('table_name', filters.tableName);
+    if (filters?.action) query = query.eq('action', filters.action);
+    if (filters?.actorEmail) query = query.eq('actor_email', filters.actorEmail);
+    if (filters?.search?.trim()) {
+      const q = filters.search.trim().replace(/,/g, ' ');
+      query = query.or(
+        `record_summary.ilike.%${q}%,actor_email.ilike.%${q}%,actor_name.ilike.%${q}%,entity_label.ilike.%${q}%`
+      );
+    }
+
+    const { data, error, count } = await query;
+    if (error) {
+      const missing =
+        error.code === '42P01' ||
+        error.code === 'PGRST205' ||
+        error.message?.includes('audit_logs');
+      if (missing) {
+        return { rows: [], totalCount: 0, missingMigration: true };
+      }
+      throw error;
+    }
+
+    const rows: AuditLogEntry[] = (data || []).map((r) => ({
+      id: Number(r.id),
+      occurredAt: r.occurred_at,
+      logMonth: r.log_month,
+      tableName: r.table_name,
+      entityLabel: r.entity_label,
+      action: r.action as AuditAction,
+      recordId: r.record_id ?? null,
+      recordSummary: r.record_summary || '',
+      actorId: r.actor_id ?? null,
+      actorEmail: r.actor_email || 'system',
+      actorName: r.actor_name || r.actor_email || 'system',
+      changedFields: (r.changed_fields as Record<string, unknown> | null) ?? null,
+    }));
+
+    return { rows, totalCount: count ?? rows.length, missingMigration: false };
+  },
+
+  async fetchAllAuditLogsForMonth(month: string): Promise<AuditLogEntry[]> {
+    const client = db();
+    const all: AuditLogEntry[] = [];
+    const pageSize = 1000;
+    let offset = 0;
+
+    while (true) {
+      const { data, error } = await client
+        .from('audit_logs')
+        .select('*')
+        .eq('log_month', month)
+        .order('occurred_at', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) throw error;
+      const chunk = data || [];
+      for (const r of chunk) {
+        all.push({
+          id: Number(r.id),
+          occurredAt: r.occurred_at,
+          logMonth: r.log_month,
+          tableName: r.table_name,
+          entityLabel: r.entity_label,
+          action: r.action as AuditAction,
+          recordId: r.record_id ?? null,
+          recordSummary: r.record_summary || '',
+          actorId: r.actor_id ?? null,
+          actorEmail: r.actor_email || 'system',
+          actorName: r.actor_name || r.actor_email || 'system',
+          changedFields: (r.changed_fields as Record<string, unknown> | null) ?? null,
+        });
+      }
+      if (chunk.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    return all;
+  },
+
+  async getAuditLogStats(): Promise<{ stats: AuditLogStats | null; missingMigration: boolean }> {
+    const { data, error } = await db().rpc('get_audit_log_stats');
+    if (error) {
+      const missing =
+        error.code === '42883' ||
+        error.code === 'PGRST202' ||
+        error.code === '42P01' ||
+        error.message?.includes('get_audit_log_stats') ||
+        error.message?.includes('audit_logs');
+      if (missing) {
+        return { stats: null, missingMigration: true };
+      }
+      throw error;
+    }
+
+    const raw = (data || {}) as Record<string, unknown>;
+    const rawMonths = Array.isArray(raw.months) ? raw.months : [];
+    const stats: AuditLogStats = {
+      totalRows: Number(raw.total_rows) || 0,
+      auditTableBytes: Number(raw.audit_table_bytes) || 0,
+      auditTableMb: Number(raw.audit_table_mb) || 0,
+      dbTotalBytes: Number(raw.db_total_bytes) || 0,
+      dbTotalMb: Number(raw.db_total_mb) || 0,
+      dbLimitMb: Number(raw.db_limit_mb) || 500,
+      months: rawMonths.map((m) => {
+        const obj = m as Record<string, unknown>;
+        return {
+          month: String(obj.month || ''),
+          rowCount: Number(obj.row_count) || 0,
+          oldestAt: String(obj.oldest_at || ''),
+          newestAt: String(obj.newest_at || ''),
+        };
+      }),
+    };
+    return { stats, missingMigration: false };
+  },
+
+  async purgeAuditLogsForMonth(month: string): Promise<number> {
+    const { data, error } = await db().rpc('purge_audit_logs_for_month', { p_month: month });
+    if (error) throw error;
+    return Number(data) || 0;
+  },
+
+  async purgeAuditLogsOlderThan(keepDays: number): Promise<number> {
+    const { data, error } = await db().rpc('purge_audit_logs_older_than', {
+      p_keep_days: keepDays,
+    });
+    if (error) throw error;
+    return Number(data) || 0;
   },
 };

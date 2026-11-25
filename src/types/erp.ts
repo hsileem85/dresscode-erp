@@ -9,6 +9,8 @@ export type NavTab =
   | 'sales'
   | 'customers'
   | 'expenses'
+  | 'reports'
+  | 'audit'
   | 'basicdata'
   | 'excel';
 
@@ -393,4 +395,38 @@ export interface ModelCostBreakdown {
   suggestedRetailPrice: number;
   profitPerPiece: number;
   effectiveMarginOnPricePct: number;
+}
+
+export type AuditAction = 'INSERT' | 'UPDATE' | 'DELETE';
+
+export interface AuditLogEntry {
+  id: number;
+  occurredAt: string;
+  logMonth: string;
+  tableName: string;
+  entityLabel: string;
+  action: AuditAction;
+  recordId: string | null;
+  recordSummary: string;
+  actorId: string | null;
+  actorEmail: string;
+  actorName: string;
+  changedFields: Record<string, unknown> | null;
+}
+
+export interface AuditMonthSummary {
+  month: string;
+  rowCount: number;
+  oldestAt: string;
+  newestAt: string;
+}
+
+export interface AuditLogStats {
+  totalRows: number;
+  auditTableBytes: number;
+  auditTableMb: number;
+  dbTotalBytes: number;
+  dbTotalMb: number;
+  dbLimitMb: number;
+  months: AuditMonthSummary[];
 }

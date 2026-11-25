@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertCircle, Database, X } from 'lucide-react';
+import { AuditTrailView } from './components/audit/AuditTrailView';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { ConfirmProvider } from './components/common/ConfirmDialog';
 import { BasicDataView } from './components/basicdata/BasicDataView';
@@ -16,6 +17,7 @@ import { MaterialsView } from './components/materials/MaterialsView';
 import { ModelsBOMView } from './components/models/ModelsBOMView';
 import { ProductionView } from './components/production/ProductionView';
 import { PurchasesView } from './components/purchases/PurchasesView';
+import { ReportsView } from './components/reports/ReportsView';
 import { SalesView } from './components/sales/SalesView';
 import { ERPProvider, useERP } from './context/ERPContext';
 import { isSupabaseConfigured } from './lib/supabase';
@@ -101,6 +103,8 @@ const ERPShell: React.FC = () => {
           {activeTab === 'sales' && <SalesView />}
           {activeTab === 'customers' && <CustomersView />}
           {activeTab === 'expenses' && <ExpensesCashboxView />}
+          {activeTab === 'reports' && <ReportsView />}
+          {activeTab === 'audit' && <AuditTrailView />}
           {activeTab === 'excel' && <ExcelImportExportView />}
         </main>
       </div>

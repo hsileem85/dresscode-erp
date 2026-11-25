@@ -1,10 +1,12 @@
 import React from 'react';
 import {
+  BarChart3,
   Calculator,
   Database,
   Factory,
   FileSpreadsheet,
   Hammer,
+  History,
   Layers,
   LayoutDashboard,
   LogIn,
@@ -115,13 +117,25 @@ const NAV_SECTIONS: { title?: string; items: NavItem[] }[] = [
     ],
   },
   {
-    title: '٤. المالية والأدوات',
+    title: '٤. المالية والتقارير والأدوات',
     items: [
       {
         id: 'expenses',
         label: 'المصروفات والخزنة',
         sublabel: 'المتاح ورأس مال الشركاء',
         icon: Wallet,
+      },
+      {
+        id: 'reports',
+        label: 'التقارير التحليلية',
+        sublabel: 'الربحية، المخزون، الموردين والذمم',
+        icon: BarChart3,
+      },
+      {
+        id: 'audit',
+        label: 'سجل التدقيق والأرشفة',
+        sublabel: 'من أضاف وعدّل + مساحة 500 MB',
+        icon: History,
       },
       {
         id: 'excel',
