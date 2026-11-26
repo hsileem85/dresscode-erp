@@ -95,9 +95,9 @@ export const WorkflowHubView: React.FC = () => {
   const [generatingMatrix, setGeneratingMatrix] = useState(false);
   const [matrixDoneMsg, setMatrixDoneMsg] = useState<string | null>(null);
 
-  // Track 2: Smart Production Material Pre-Check state
+  // Track 2: Smart Production Material Pre-Check state (start empty — never assume 30 pieces!)
   const [checkModelId, setCheckModelId] = useState<string>(state.models[0]?.id || '');
-  const [checkBatchQty, setCheckBatchQty] = useState<number>(30);
+  const [checkBatchQty, setCheckBatchQty] = useState<number>(0);
 
   // Track 3: Bulk COD Settlement state
   const [selectedCodIds, setSelectedCodIds] = useState<string[]>([]);
@@ -225,21 +225,26 @@ export const WorkflowHubView: React.FC = () => {
       return {
         fabrics: [],
         trims: [],
+        hasPlannedQty: false,
+        plannedQty: 0,
+        maxProducibleQty: 0,
         hasShortage: false,
         shortageCount: 0,
         estimatedUnitCost: 0,
         estimatedBatchCost: 0,
       };
     }
-    const qty = Math.max(1, toWholeQty(checkBatchQty, 1));
+    const qty = toWholeQty(checkBatchQty, 0);
+    const hasPlannedQty = qty > 0;
     const calc = calculateModelCost(checkModel, allFabrics, allTrims, allOverhead);
 
     const fabricRows = (checkModel.fabrics || []).map((mf) => {
       const fab = allFabrics.find((f) => f.id === mf.fabricId);
-      const required =
-        Math.ceil(mf.consumption * (1 + (mf.wastePct || 0) / 100) * qty * 100) / 100;
+      const perPiece =
+        Math.round(mf.consumption * (1 + (mf.wastePct || 0) / 100) * 1000) / 1000;
+      const required = hasPlannedQty ? Math.ceil(perPiece * qty * 100) / 100 : 0;
       const available = Math.max(0, Number(fab?.stockQty) || 0);
-      const shortage = Math.max(0, Math.ceil((required - available) * 100) / 100);
+      const shortage = hasPlannedQty ? Math.max(0, Math.ceil((required - available) * 100) / 100) : 0;
       return {
         fabricId: mf.fabricId,
         name: fab?.name || 'قماش غير معروف',
@@ -247,34 +252,50 @@ export const WorkflowHubView: React.FC = () => {
         supplierName: fab?.supplier || 'مورد عام',
         unit: fab ? FABRIC_UNIT_LABELS[fab.unit] : 'متر',
         unitPrice: fab?.pricePerUnit || 0,
+        perPiece,
         required,
         available,
         shortage,
       };
     });
 
-    // Combine explicit BOM trims + auto-included trims
-    const trimQtyMap = new Map<string, number>();
+    // Combine explicit BOM trims + auto-included trims (per-piece rate)
+    const trimPerPieceMap = new Map<string, number>();
     for (const mt of checkModel.trims || []) {
       if ((mt.quantity || 0) <= 0) continue;
-      trimQtyMap.set(mt.trimId, (trimQtyMap.get(mt.trimId) || 0) + (mt.quantity || 0) * qty);
+      trimPerPieceMap.set(mt.trimId, (trimPerPieceMap.get(mt.trimId) || 0) + (mt.quantity || 0));
     }
     const autoTrims = getAutoIncludedTrimsForModel(checkModel, allTrims);
     for (const at of autoTrims) {
       if ((at.quantity || 0) <= 0) continue;
-      trimQtyMap.set(
+      trimPerPieceMap.set(
         at.trimId,
-        (trimQtyMap.get(at.trimId) || 0) + (at.quantity || 1) * qty
+        (trimPerPieceMap.get(at.trimId) || 0) + (at.quantity || 1)
       );
     }
 
-    const trimRows = Array.from(trimQtyMap.entries()).map(([trimId, rawReq]) => {
+    const trimRows = Array.from(trimPerPieceMap.entries()).map(([trimId, perPiece]) => {
       const tr = allTrims.find((t) => t.id === trimId);
-      const requiredUnits = Math.ceil(rawReq);
+      const isMeterTrim = tr?.purchaseUnit === 'meter' || tr?.unitLabel === 'متر';
+      const rawReq = perPiece * qty;
+      const requiredUnits = hasPlannedQty
+        ? isMeterTrim
+          ? Math.ceil(rawReq * 100) / 100
+          : Math.ceil(rawReq)
+        : 0;
       const availableUnits = Math.max(0, Number(tr?.stockQty) || 0);
-      const shortageUnits = Math.max(0, Math.ceil(requiredUnits - availableUnits));
+      const shortageUnits = hasPlannedQty
+        ? isMeterTrim
+          ? Math.max(0, Math.ceil((requiredUnits - availableUnits) * 100) / 100)
+          : Math.max(0, Math.ceil(requiredUnits - availableUnits))
+        : 0;
       const unitsPerPack = Math.max(1, tr?.unitsPerPack || 1);
-      const shortagePacks = shortageUnits > 0 ? Math.max(1, Math.ceil(shortageUnits / unitsPerPack)) : 0;
+      const shortagePacks =
+        shortageUnits > 0
+          ? isMeterTrim
+            ? Math.ceil((shortageUnits / unitsPerPack) * 100) / 100
+            : Math.max(1, Math.ceil(shortageUnits / unitsPerPack))
+          : 0;
       return {
         trimId,
         name: tr?.name || 'كلفة غير معروفة',
@@ -282,6 +303,7 @@ export const WorkflowHubView: React.FC = () => {
         supplierName: tr?.supplier || 'مورد عام',
         unit: tr?.unitLabel || 'قطعة',
         packPrice: tr?.packPrice || 0,
+        perPiece: Math.round(perPiece * 1000) / 1000,
         requiredUnits,
         availableUnits,
         shortageUnits,
@@ -289,17 +311,32 @@ export const WorkflowHubView: React.FC = () => {
       };
     });
 
-    const shortageCount =
-      fabricRows.filter((f) => f.shortage > 0).length +
-      trimRows.filter((t) => t.shortageUnits > 0).length;
+    const producibleCaps = [
+      ...fabricRows
+        .filter((f) => f.perPiece > 0)
+        .map((f) => Math.floor(f.available / f.perPiece)),
+      ...trimRows
+        .filter((t) => t.perPiece > 0)
+        .map((t) => Math.floor(t.availableUnits / t.perPiece)),
+    ];
+    const maxProducibleQty =
+      producibleCaps.length > 0 ? Math.max(0, Math.min(...producibleCaps)) : 0;
+
+    const shortageCount = hasPlannedQty
+      ? fabricRows.filter((f) => f.shortage > 0).length +
+        trimRows.filter((t) => t.shortageUnits > 0).length
+      : 0;
 
     return {
       fabrics: fabricRows,
       trims: trimRows,
+      hasPlannedQty,
+      plannedQty: qty,
+      maxProducibleQty,
       hasShortage: shortageCount > 0,
       shortageCount,
       estimatedUnitCost: calc.totalUnitCost,
-      estimatedBatchCost: calc.totalUnitCost * qty,
+      estimatedBatchCost: hasPlannedQty ? calc.totalUnitCost * qty : 0,
     };
   }, [checkModel, checkBatchQty, allFabrics, allTrims, allOverhead]);
 
@@ -649,43 +686,87 @@ export const WorkflowHubView: React.FC = () => {
             </div>
 
             {/* Smart Pre-Check Inputs */}
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl p-4">
-              <div className="sm:col-span-6">
-                <label className="block text-xs font-bold text-[#1A1A1E] mb-1">
-                  اختر الموديل المراد تصنيعه
-                </label>
-                <ModelSmartSelect
-                  models={state.models}
-                  value={checkModel?.id || ''}
-                  onChange={setCheckModelId}
-                  showVariantCount
-                />
-              </div>
-              <div className="sm:col-span-3">
-                <label className="block text-xs font-bold text-[#1A1A1E] mb-1">
-                  عدد القطع المخطط تصنيعها
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={checkBatchQty || ''}
-                  onKeyDown={blockNonIntegerKey}
-                  onChange={(e) => setCheckBatchQty(toWholeQty(e.target.value, 0))}
-                  onBlur={() => setCheckBatchQty(toWholeQty(checkBatchQty, 1))}
-                  className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-bold text-center tabular-nums"
-                />
-              </div>
-              <div className="sm:col-span-3">
-                <div className="rounded-xl bg-white border border-[#E5E3DD] px-3 py-2 text-center">
-                  <div className="text-[10px] text-[#6E6C66]">التكلفة التقديرية للتشغيلة</div>
-                  <div className="text-sm font-extrabold text-[#8E6742] tabular-nums">
-                    {formatMoney(materialPreCheck.estimatedBatchCost, state.currency)}
+            <div className="bg-[#FAF9F7] border border-[#EAE8E2] rounded-xl p-4 space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                <div className="sm:col-span-6">
+                  <label className="block text-xs font-bold text-[#1A1A1E] mb-1">
+                    اختر الموديل المراد تصنيعه
+                  </label>
+                  <ModelSmartSelect
+                    models={state.models}
+                    value={checkModel?.id || ''}
+                    onChange={(id) => {
+                      setCheckModelId(id);
+                      setCheckBatchQty(0);
+                    }}
+                    showVariantCount
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <label className="block text-xs font-bold text-[#1A1A1E] mb-1">
+                    عدد القطع المخطط تصنيعها
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={checkBatchQty || ''}
+                    placeholder="أدخل العدد..."
+                    onKeyDown={blockNonIntegerKey}
+                    onChange={(e) => setCheckBatchQty(toWholeQty(e.target.value, 0))}
+                    className="w-full rounded-xl border border-[#E5E3DD] bg-white px-3 py-2 text-xs font-bold text-center tabular-nums focus:outline-none focus:border-[#A67C52]"
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <div className="rounded-xl bg-white border border-[#E5E3DD] px-3 py-2 text-center">
+                    <div className="text-[10px] text-[#6E6C66]">
+                      {materialPreCheck.hasPlannedQty
+                        ? `التكلفة التقديرية (${materialPreCheck.plannedQty} قطعة)`
+                        : 'تكلفة القطعة الواحدة'}
+                    </div>
+                    <div className="text-sm font-extrabold text-[#8E6742] tabular-nums">
+                      {formatMoney(
+                        materialPreCheck.hasPlannedQty
+                          ? materialPreCheck.estimatedBatchCost
+                          : materialPreCheck.estimatedUnitCost,
+                        state.currency
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {checkModel && (materialPreCheck.fabrics.length > 0 || materialPreCheck.trims.length > 0) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px]">
+                  <span className="text-[#6E6C66]">
+                    {materialPreCheck.maxProducibleQty > 0 ? (
+                      <>
+                        المخزون المتاح حالياً يكفي لتصنيع حتى{' '}
+                        <b className="text-emerald-700 tabular-nums">
+                          {materialPreCheck.maxProducibleQty} قطعة
+                        </b>{' '}
+                        بدون شراء خامات إضافية.
+                      </>
+                    ) : (
+                      <span>
+                        بعض الخامات الأساسية لهذا الموديل غير متوفرة حالياً في المخزن — أدخل عدد
+                        القطع المخطط لمعرفة الاحتياج الدقيق.
+                      </span>
+                    )}
+                  </span>
+                  {materialPreCheck.maxProducibleQty > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCheckBatchQty(materialPreCheck.maxProducibleQty)}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 font-bold cursor-pointer"
+                    >
+                      تعبئة أقصى متاح ({materialPreCheck.maxProducibleQty} قطعة)
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Traffic-Light Availability Table */}
@@ -693,17 +774,22 @@ export const WorkflowHubView: React.FC = () => {
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-xs font-bold text-[#1A1A1E]">
-                    نتيجة الفحص الفوري للخامات والكلف المطلوبة لـ ({toWholeQty(checkBatchQty, 1)}{' '}
-                    قطعة):
+                    {materialPreCheck.hasPlannedQty
+                      ? `نتيجة الفحص الفوري للخامات والكلف المطلوبة لـ (${materialPreCheck.plannedQty} قطعة):`
+                      : 'خامات وكلف الموديل (أدخل عدد القطع بالأعلى لفحص الاحتياج والعجز الفعلي):'}
                   </h3>
                   <span
                     className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                      materialPreCheck.hasShortage
-                        ? 'bg-amber-100 text-amber-900'
-                        : 'bg-emerald-50 text-emerald-700'
+                      !materialPreCheck.hasPlannedQty
+                        ? 'bg-[#F3F2EE] text-[#5C5A55]'
+                        : materialPreCheck.hasShortage
+                          ? 'bg-amber-100 text-amber-900'
+                          : 'bg-emerald-50 text-emerald-700'
                     }`}
                   >
-                    {materialPreCheck.hasShortage ? (
+                    {!materialPreCheck.hasPlannedQty ? (
+                      <span>بانتظار إدخال عدد القطع</span>
+                    ) : materialPreCheck.hasShortage ? (
                       <>
                         <AlertTriangle className="w-3.5 h-3.5" />
                         <span>يوجد عجز في {materialPreCheck.shortageCount} صنف</span>
@@ -722,7 +808,11 @@ export const WorkflowHubView: React.FC = () => {
                     <thead className="bg-[#FAF9F7] text-[#6E6C66] border-b border-[#E5E3DD]">
                       <tr>
                         <th className="py-2 px-3">الخامة / الكلفة</th>
-                        <th className="py-2 px-3 text-center">المطلوب (بالهالك)</th>
+                        <th className="py-2 px-3 text-center">
+                          {materialPreCheck.hasPlannedQty
+                            ? 'المطلوب للتشغيلة'
+                            : 'الاستهلاك للقطعة الواحدة'}
+                        </th>
                         <th className="py-2 px-3 text-center">المتاح بالمخزن</th>
                         <th className="py-2 px-3 text-center">العجز</th>
                         <th className="py-2 px-3 text-center">الحالة</th>
@@ -735,24 +825,34 @@ export const WorkflowHubView: React.FC = () => {
                             قماش: {f.name}
                           </td>
                           <td className="py-2 px-3 text-center font-bold tabular-nums">
-                            {f.required} {f.unit}
+                            {materialPreCheck.hasPlannedQty
+                              ? `${f.required} ${f.unit}`
+                              : `${formatNumber(f.perPiece, 3)} ${f.unit} / قطعة`}
                           </td>
                           <td className="py-2 px-3 text-center tabular-nums">
-                            {formatNumber(f.available, 1)} {f.unit}
+                            {formatNumber(f.available, 2)} {f.unit}
                           </td>
                           <td className="py-2 px-3 text-center font-extrabold tabular-nums text-red-700">
-                            {f.shortage > 0 ? `${f.shortage} ${f.unit}` : '—'}
+                            {materialPreCheck.hasPlannedQty && f.shortage > 0
+                              ? `${f.shortage} ${f.unit}`
+                              : '—'}
                           </td>
                           <td className="py-2 px-3 text-center">
-                            <span
-                              className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                f.shortage > 0
-                                  ? 'bg-red-100 text-red-700'
-                                  : 'bg-emerald-50 text-emerald-700'
-                              }`}
-                            >
-                              {f.shortage > 0 ? 'ناقص' : 'متاح ✓'}
-                            </span>
+                            {!materialPreCheck.hasPlannedQty ? (
+                              <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#F3F2EE] text-[#6E6C66]">
+                                بانتظار العدد
+                              </span>
+                            ) : (
+                              <span
+                                className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  f.shortage > 0
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-emerald-50 text-emerald-700'
+                                }`}
+                              >
+                                {f.shortage > 0 ? 'ناقص' : 'متاح ✓'}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -762,24 +862,34 @@ export const WorkflowHubView: React.FC = () => {
                             كلفة/مستلزم: {t.name}
                           </td>
                           <td className="py-2 px-3 text-center font-bold tabular-nums">
-                            {t.requiredUnits} {t.unit}
+                            {materialPreCheck.hasPlannedQty
+                              ? `${t.requiredUnits} ${t.unit}`
+                              : `${formatNumber(t.perPiece, 2)} ${t.unit} / قطعة`}
                           </td>
                           <td className="py-2 px-3 text-center tabular-nums">
-                            {formatNumber(t.availableUnits, 1)} {t.unit}
+                            {formatNumber(t.availableUnits, 2)} {t.unit}
                           </td>
                           <td className="py-2 px-3 text-center font-extrabold tabular-nums text-red-700">
-                            {t.shortageUnits > 0 ? `${t.shortageUnits} ${t.unit}` : '—'}
+                            {materialPreCheck.hasPlannedQty && t.shortageUnits > 0
+                              ? `${t.shortageUnits} ${t.unit}`
+                              : '—'}
                           </td>
                           <td className="py-2 px-3 text-center">
-                            <span
-                              className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                t.shortageUnits > 0
-                                  ? 'bg-red-100 text-red-700'
-                                  : 'bg-emerald-50 text-emerald-700'
-                              }`}
-                            >
-                              {t.shortageUnits > 0 ? 'ناقص' : 'متاح ✓'}
-                            </span>
+                            {!materialPreCheck.hasPlannedQty ? (
+                              <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#F3F2EE] text-[#6E6C66]">
+                                بانتظار العدد
+                              </span>
+                            ) : (
+                              <span
+                                className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  t.shortageUnits > 0
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-emerald-50 text-emerald-700'
+                                }`}
+                              >
+                                {t.shortageUnits > 0 ? 'ناقص' : 'متاح ✓'}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -798,26 +908,32 @@ export const WorkflowHubView: React.FC = () => {
                 {/* Flexible Optional Decision Bar */}
                 <div
                   className={`rounded-xl p-4 border flex flex-wrap items-center justify-between gap-3 ${
-                    materialPreCheck.hasShortage
-                      ? 'bg-amber-50/80 border-amber-200'
-                      : 'bg-emerald-50/70 border-emerald-200'
+                    !materialPreCheck.hasPlannedQty
+                      ? 'bg-[#FAF9F7] border-[#EAE8E2]'
+                      : materialPreCheck.hasShortage
+                        ? 'bg-amber-50/80 border-amber-200'
+                        : 'bg-emerald-50/70 border-emerald-200'
                   }`}
                 >
                   <div className="space-y-0.5 max-w-xl">
                     <div className="text-xs font-bold text-[#1A1A1E]">
-                      {materialPreCheck.hasShortage
-                        ? 'القرار بيدك (الشراء اختياري تماماً):'
-                        : 'الخامات جاهزة — يمكنك إصدار أمر التصنيع الآن!'}
+                      {!materialPreCheck.hasPlannedQty
+                        ? 'أدخل عدد القطع المخطط تصنيعها لفحص الخامات بدقة:'
+                        : materialPreCheck.hasShortage
+                          ? 'القرار بيدك (الشراء اختياري تماماً):'
+                          : 'الخامات جاهزة — يمكنك إصدار أمر التصنيع الآن!'}
                     </div>
                     <p className="text-[11px] text-[#4B4A46]">
-                      {materialPreCheck.hasShortage
-                        ? 'إذا كان القماش غير متوفر لدى المورد يمكنك تقليل الكمية أو تعديل الباترون بلون/خامة بديلة، أو تجهيز أمر شراء اختياري بالنواقص فقط.'
-                        : 'الانتقال مباشرة لأمر التصنيع مع اختيار الموديل تلقائياً.'}
+                      {!materialPreCheck.hasPlannedQty
+                        ? 'لن يفترض النظام عدداً عشوائياً — اكتب العدد الفعلي المخطط تصنيعه (أو اضغط «تعبئة أقصى متاح») لحساب الاحتياج الحقيقي.'
+                        : materialPreCheck.hasShortage
+                          ? 'إذا كان القماش غير متوفر لدى المورد يمكنك تقليل الكمية أو تعديل الباترون بلون/خامة بديلة، أو تجهيز أمر شراء اختياري بالنواقص فقط.'
+                          : 'الانتقال مباشرة لأمر التصنيع مع اختيار الموديل تلقائياً.'}
                     </p>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {materialPreCheck.hasShortage && (
+                    {materialPreCheck.hasPlannedQty && materialPreCheck.hasShortage && (
                       <>
                         <button
                           type="button"
