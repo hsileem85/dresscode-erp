@@ -6,18 +6,22 @@ import {
   computePaymentStatus,
   erpDb,
   fetchFullERPState,
+  formatDisplayIdentifier,
   isSupabaseConfigured,
   newUuid,
   supabase,
 } from '../lib/supabase';
 import { DEFAULT_LOOKUPS } from '../data/defaultLookups';
 import { formatMoney } from '../utils/calculations';
+import { appendLocalReconciliationHistory } from '../utils/reconciliationStorage';
 import type {
+  CashReconciliationPayload,
   CurrencyCode,
   Customer,
   ERPState,
   ExpenseRecord,
   Fabric,
+  InventoryMovement,
   LookupGroupKey,
   LookupItem,
   ModelVariant,
@@ -27,8 +31,11 @@ import type {
   PartnerContribution,
   PendingPoDraft,
   ProductModel,
+  ReconciliationSession,
   SalesChannel,
   SalesExchangeReturnPayload,
+  StockReconciliationLine,
+  StockReconciliationPayload,
   Supplier,
   TrimAccessory,
   UserRole,
@@ -207,6 +214,16 @@ interface ERPContextValue {
   bulkSettleSalesOrders: (orderIds: string[], paymentMethod?: string) => Promise<number>;
   cancelSalesOrder: (saleId: string) => Promise<void>;
   deleteSalesOrder: (saleId: string) => Promise<void>;
+
+  // Cash & Stock Reconciliation (الجرد والتسوية)
+  reconcileCash: (payload: CashReconciliationPayload) => Promise<{
+    session: ReconciliationSession;
+    savedToCloudHistory: boolean;
+  }>;
+  reconcileStock: (payload: StockReconciliationPayload) => Promise<{
+    session: ReconciliationSession;
+    savedToCloudHistory: boolean;
+  }>;
 
   // Data management
   importFullJSON: (data: ERPState) => void;
@@ -2346,6 +2363,288 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const reconcileCash: ERPContextValue['reconcileCash'] = async (payload) => {
+    if (payload.postAdjustment && userRole !== 'admin') {
+      const msg = 'ترحيل قيود تسوية الخزنة يتطلب صلاحية «مدير (Admin)». يمكنك حفظ محضر الجرد فقط للمراجعة.';
+      setSyncError(msg);
+      throw new Error(msg);
+    }
+
+    const actor = {
+      email: user?.email || undefined,
+      name:
+        (user?.user_metadata?.full_name as string | undefined) ||
+        (user?.user_metadata?.name as string | undefined) ||
+        formatDisplayIdentifier(user?.email) ||
+        'مستخدم محلي',
+    };
+
+    if (cloudConnected) {
+      let result: { session: ReconciliationSession; savedToCloudHistory: boolean } | null = null;
+      await runCloud(async () => {
+        result = await erpDb.recordCashReconciliation(payload, actor);
+      });
+      if (!result) {
+        throw new Error('تعذر إتمام تسوية الخزنة');
+      }
+      const finalRes = result as { session: ReconciliationSession; savedToCloudHistory: boolean };
+      if (!finalRes.savedToCloudHistory) {
+        appendLocalReconciliationHistory(finalRes.session);
+      }
+      return finalRes;
+    }
+
+    // Offline / local mode
+    const sessionId = newUuid();
+    const nowIso = new Date().toISOString();
+    const today = nowIso.slice(0, 10);
+    const systemCash = Math.round((Number(payload.systemCash) || 0) * 100) / 100;
+    const actualCash = Math.round((Number(payload.actualCash) || 0) * 100) / 100;
+    const variance = Math.round((actualCash - systemCash) * 100) / 100;
+    const shouldPost = payload.postAdjustment && Math.abs(variance) >= 0.01;
+    const cleanNote = payload.notes?.trim() || '';
+
+    if (shouldPost) {
+      setState((prev) => {
+        if (variance < 0) {
+          const shortage = Math.round(Math.abs(variance) * 100) / 100;
+          return {
+            ...prev,
+            expenses: [
+              {
+                id: newUuid(),
+                expenseDate: today,
+                title: `تسوية عجز جرد خزنة (${payload.reconciliationNumber})`,
+                category: 'تسوية جرد خزنة',
+                isRawMaterialPurchase: !payload.affectPnl,
+                amount: shortage,
+                paymentMethod: payload.paymentMethod || 'كاش',
+                notes: cleanNote || 'تسوية فروق جرد الخزنة (عجز)',
+              },
+              ...prev.expenses,
+            ],
+          };
+        }
+        const surplus = Math.round(variance * 100) / 100;
+        return {
+          ...prev,
+          partnerContributions: [
+            {
+              id: newUuid(),
+              partnerName: 'تسوية جرد خزنة (فائض)',
+              contributionDate: today,
+              amount: surplus,
+              notes: `تسوية فائض جرد خزنة (${payload.reconciliationNumber})${
+                cleanNote ? ` — ${cleanNote}` : ''
+              }`,
+            },
+            ...prev.partnerContributions,
+          ],
+        };
+      });
+    }
+
+    const session: ReconciliationSession = {
+      id: sessionId,
+      reconciliationNumber: payload.reconciliationNumber,
+      recType: 'cash',
+      stockScope: null,
+      reconciledAt: nowIso,
+      systemValue: systemCash,
+      actualValue: actualCash,
+      varianceValue: variance,
+      itemsCounted: payload.channels.length,
+      itemsAdjusted: shouldPost ? 1 : 0,
+      adjustmentPosted: shouldPost,
+      actorEmail: actor.email,
+      actorName: actor.name,
+      notes: cleanNote || undefined,
+      details: payload.channels,
+      source: 'local',
+    };
+    appendLocalReconciliationHistory(session);
+    return { session, savedToCloudHistory: false };
+  };
+
+  const reconcileStock: ERPContextValue['reconcileStock'] = async (payload) => {
+    if (payload.postAdjustments && userRole !== 'admin') {
+      const msg = 'اعتماد وتعديل أرصدة المخزون يتطلب صلاحية «مدير (Admin)». يمكنك حفظ محضر الجرد وتصديره إكسل للمراجعة.';
+      setSyncError(msg);
+      throw new Error(msg);
+    }
+    if (!payload.lines || payload.lines.length === 0) {
+      const msg = 'يجب إدخال جرد فعلي لصنف واحد على الأقل قبل الاعتماد';
+      setSyncError(msg);
+      throw new Error(msg);
+    }
+
+    const actor = {
+      email: user?.email || undefined,
+      name:
+        (user?.user_metadata?.full_name as string | undefined) ||
+        (user?.user_metadata?.name as string | undefined) ||
+        formatDisplayIdentifier(user?.email) ||
+        'مستخدم محلي',
+    };
+
+    if (cloudConnected) {
+      let result: { session: ReconciliationSession; savedToCloudHistory: boolean } | null = null;
+      await runCloud(async () => {
+        result = await erpDb.applyStockReconciliation(payload, actor);
+      });
+      if (!result) {
+        throw new Error('تعذر إتمام تسوية المخزون');
+      }
+      const finalRes = result as { session: ReconciliationSession; savedToCloudHistory: boolean };
+      if (!finalRes.savedToCloudHistory) {
+        appendLocalReconciliationHistory(finalRes.session);
+      }
+      return finalRes;
+    }
+
+    // Offline / local mode
+    const sessionId = newUuid();
+    const nowIso = new Date().toISOString();
+    const cleanNotes = payload.notes?.trim() || '';
+
+    const normalizedLines: StockReconciliationLine[] = payload.lines.map((line) => {
+      const actualQty =
+        line.itemType === 'fabric'
+          ? Math.max(0, Math.round((Number(line.actualQty) || 0) * 1000) / 1000)
+          : Math.max(0, Math.trunc(Number(line.actualQty) || 0));
+      const systemQty = Math.round((Number(line.systemQty) || 0) * 1000) / 1000;
+      const qtyDelta = Math.round((actualQty - systemQty) * 1000) / 1000;
+      const unitCost = Math.round((Number(line.unitCost) || 0) * 10000) / 10000;
+      const valueDelta = Math.round(qtyDelta * unitCost * 100) / 100;
+      return {
+        itemType: line.itemType,
+        itemId: line.itemId,
+        itemName: line.itemName,
+        unitLabel: line.unitLabel,
+        systemQty,
+        actualQty,
+        qtyDelta,
+        unitCost,
+        valueDelta,
+        note: line.note?.trim() || '',
+      };
+    });
+
+    const adjustedLines = payload.postAdjustments
+      ? normalizedLines.filter((l) =>
+          l.itemType === 'finished_good'
+            ? Math.abs(l.qtyDelta) >= 1
+            : Math.abs(l.qtyDelta) >= 0.001
+        )
+      : [];
+
+    if (adjustedLines.length > 0) {
+      const fabricMap = new Map<string, number>();
+      const trimMap = new Map<string, number>();
+      const variantMap = new Map<string, number>();
+      const newMovements: InventoryMovement[] = [];
+
+      for (const line of adjustedLines) {
+        const moveNote = `تسوية جرد (${payload.reconciliationNumber})${
+          line.note || cleanNotes ? ` — ${line.note || cleanNotes}` : ''
+        }`;
+        if (line.itemType === 'fabric') {
+          fabricMap.set(line.itemId, line.actualQty);
+          newMovements.push({
+            id: newUuid(),
+            itemType: 'fabric',
+            fabricId: line.itemId,
+            movementType: 'adjustment',
+            qtyDelta: line.qtyDelta,
+            unitCost: line.unitCost,
+            referenceType: 'reconciliation',
+            notes: moveNote,
+            createdAt: nowIso,
+          });
+        } else if (line.itemType === 'trim') {
+          trimMap.set(line.itemId, line.actualQty);
+          newMovements.push({
+            id: newUuid(),
+            itemType: 'trim',
+            trimId: line.itemId,
+            movementType: 'adjustment',
+            qtyDelta: line.qtyDelta,
+            unitCost: line.unitCost,
+            referenceType: 'reconciliation',
+            notes: moveNote,
+            createdAt: nowIso,
+          });
+        } else if (line.itemType === 'finished_good') {
+          variantMap.set(line.itemId, Math.trunc(line.actualQty));
+          newMovements.push({
+            id: newUuid(),
+            itemType: 'finished_good',
+            variantId: line.itemId,
+            movementType: 'adjustment',
+            qtyDelta: Math.trunc(line.qtyDelta),
+            unitCost: line.unitCost,
+            referenceType: 'reconciliation',
+            notes: moveNote,
+            createdAt: nowIso,
+          });
+        }
+      }
+
+      setState((prev) => ({
+        ...prev,
+        fabrics:
+          fabricMap.size > 0
+            ? prev.fabrics.map((f) =>
+                fabricMap.has(f.id) ? { ...f, stockQty: fabricMap.get(f.id)! } : f
+              )
+            : prev.fabrics,
+        trims:
+          trimMap.size > 0
+            ? prev.trims.map((t) =>
+                trimMap.has(t.id) ? { ...t, stockQty: trimMap.get(t.id)! } : t
+              )
+            : prev.trims,
+        models:
+          variantMap.size > 0
+            ? prev.models.map((m) => ({
+                ...m,
+                variants: m.variants.map((v) =>
+                  variantMap.has(v.id) ? { ...v, finishedGoodsQty: variantMap.get(v.id)! } : v
+                ),
+              }))
+            : prev.models,
+        inventoryMovements: [...newMovements, ...prev.inventoryMovements],
+      }));
+    }
+
+    const systemValue =
+      Math.round(normalizedLines.reduce((s, l) => s + l.systemQty * l.unitCost, 0) * 100) / 100;
+    const actualValue =
+      Math.round(normalizedLines.reduce((s, l) => s + l.actualQty * l.unitCost, 0) * 100) / 100;
+    const varianceValue = Math.round((actualValue - systemValue) * 100) / 100;
+
+    const session: ReconciliationSession = {
+      id: sessionId,
+      reconciliationNumber: payload.reconciliationNumber,
+      recType: 'stock',
+      stockScope: payload.stockScope,
+      reconciledAt: nowIso,
+      systemValue,
+      actualValue,
+      varianceValue,
+      itemsCounted: normalizedLines.length,
+      itemsAdjusted: adjustedLines.length,
+      adjustmentPosted: adjustedLines.length > 0,
+      actorEmail: actor.email,
+      actorName: actor.name,
+      notes: cleanNotes || undefined,
+      details: normalizedLines,
+      source: 'local',
+    };
+    appendLocalReconciliationHistory(session);
+    return { session, savedToCloudHistory: false };
+  };
+
   const importFullJSON = (data: ERPState) => {
     setState(data);
     setSelectedModelId(data.models[0]?.id ?? null);
@@ -2447,6 +2746,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkSettleSalesOrders,
         cancelSalesOrder,
         deleteSalesOrder,
+        reconcileCash,
+        reconcileStock,
         importFullJSON,
         resetToSeedData,
         lastSavedAt,

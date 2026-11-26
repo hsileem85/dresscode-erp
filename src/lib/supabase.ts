@@ -4,6 +4,8 @@ import type {
   AuditAction,
   AuditLogEntry,
   AuditLogStats,
+  CashChannelCount,
+  CashReconciliationPayload,
   CurrencyCode,
   Customer,
   ERPState,
@@ -19,8 +21,11 @@ import type {
   ProductModel,
   ProductionOrder,
   PurchaseOrder,
+  ReconciliationSession,
   SalesExchangeReturnPayload,
   SalesOrder,
+  StockReconciliationLine,
+  StockReconciliationPayload,
   Supplier,
   TrimAccessory,
   UserRole,
@@ -2481,5 +2486,374 @@ export const erpDb = {
     const cleanEmail = resolveAuthIdentifier(email);
     const { error } = await db().from('user_roles').delete().eq('email', cleanEmail);
     if (error) throw error;
+  },
+
+  async fetchReconciliationSessions(): Promise<{
+    rows: ReconciliationSession[];
+    missingTable: boolean;
+  }> {
+    const { data, error } = await db()
+      .from('reconciliation_sessions')
+      .select('*')
+      .order('reconciled_at', { ascending: false })
+      .limit(120);
+
+    if (error) {
+      const missing =
+        error.code === '42P01' ||
+        error.code === 'PGRST205' ||
+        error.message?.includes('reconciliation_sessions');
+      if (missing) return { rows: [], missingTable: true };
+      throw error;
+    }
+
+    return {
+      missingTable: false,
+      rows: (data || []).map((r) => ({
+        id: String(r.id),
+        reconciliationNumber: String(r.reconciliation_number || ''),
+        recType: r.rec_type === 'cash' ? 'cash' : 'stock',
+        stockScope: r.stock_scope ?? null,
+        reconciledAt: String(r.reconciled_at || r.created_at || new Date().toISOString()),
+        systemValue: Number(r.system_value) || 0,
+        actualValue: Number(r.actual_value) || 0,
+        varianceValue: Number(r.variance_value) || 0,
+        itemsCounted: Number(r.items_counted) || 0,
+        itemsAdjusted: Number(r.items_adjusted) || 0,
+        adjustmentPosted: Boolean(r.adjustment_posted),
+        actorEmail: r.actor_email || undefined,
+        actorName: r.actor_name || undefined,
+        notes: r.notes || undefined,
+        details: Array.isArray(r.details)
+          ? (r.details as CashChannelCount[] | StockReconciliationLine[])
+          : [],
+        source: 'cloud',
+      })),
+    };
+  },
+
+  async recordCashReconciliation(
+    payload: CashReconciliationPayload,
+    actor?: { email?: string; name?: string }
+  ): Promise<{ session: ReconciliationSession; savedToCloudHistory: boolean }> {
+    const client = db();
+    const sessionId = newUuid();
+    const nowIso = new Date().toISOString();
+    const today = nowIso.slice(0, 10);
+    const systemCash = Math.round((Number(payload.systemCash) || 0) * 100) / 100;
+    const actualCash = Math.round((Number(payload.actualCash) || 0) * 100) / 100;
+    const variance = Math.round((actualCash - systemCash) * 100) / 100;
+    const shouldPost = payload.postAdjustment && Math.abs(variance) >= 0.01;
+    const cleanNote = payload.notes?.trim() || '';
+
+    if (shouldPost) {
+      if (variance < 0) {
+        const shortage = Math.round(Math.abs(variance) * 100) / 100;
+        const expId = newUuid();
+        const title = `تسوية عجز جرد خزنة (${payload.reconciliationNumber})`;
+        const { error: expErr } = await client.from('expenses').insert({
+          id: expId,
+          expense_date: today,
+          title,
+          category: 'تسوية جرد خزنة',
+          is_raw_material_purchase: !payload.affectPnl,
+          amount: shortage,
+          payment_method: payload.paymentMethod || 'كاش',
+          notes: cleanNote || 'تسوية فروق جرد الخزنة (عجز)',
+        });
+        if (expErr) throw expErr;
+
+        await client.from('financial_transactions').insert({
+          tx_type: 'expense',
+          category: 'cash_reconciliation_shortage',
+          amount: shortage,
+          reference_type: 'reconciliation',
+          reference_id: sessionId,
+          description: title,
+        });
+      } else {
+        const surplus = Math.round(variance * 100) / 100;
+        const contribId = newUuid();
+        const desc = `تسوية فائض جرد خزنة (${payload.reconciliationNumber})${
+          cleanNote ? ` — ${cleanNote}` : ''
+        }`;
+        const { error: contribErr } = await client.from('partner_contributions').insert({
+          id: contribId,
+          partner_name: 'تسوية جرد خزنة (فائض)',
+          contribution_date: today,
+          amount: surplus,
+          notes: desc,
+        });
+        if (contribErr) throw contribErr;
+
+        await client.from('financial_transactions').insert({
+          tx_type: 'capital',
+          category: 'cash_reconciliation_surplus',
+          amount: surplus,
+          reference_type: 'reconciliation',
+          reference_id: sessionId,
+          description: desc,
+        });
+      }
+    }
+
+    const session: ReconciliationSession = {
+      id: sessionId,
+      reconciliationNumber: payload.reconciliationNumber,
+      recType: 'cash',
+      stockScope: null,
+      reconciledAt: nowIso,
+      systemValue: systemCash,
+      actualValue: actualCash,
+      varianceValue: variance,
+      itemsCounted: payload.channels.length,
+      itemsAdjusted: shouldPost ? 1 : 0,
+      adjustmentPosted: shouldPost,
+      actorEmail: actor?.email,
+      actorName: actor?.name || actor?.email,
+      notes: cleanNote || undefined,
+      details: payload.channels,
+      source: 'cloud',
+    };
+
+    const { error: histErr } = await client.from('reconciliation_sessions').insert({
+      id: sessionId,
+      reconciliation_number: payload.reconciliationNumber,
+      rec_type: 'cash',
+      stock_scope: null,
+      reconciled_at: nowIso,
+      system_value: systemCash,
+      actual_value: actualCash,
+      variance_value: variance,
+      items_counted: payload.channels.length,
+      items_adjusted: shouldPost ? 1 : 0,
+      adjustment_posted: shouldPost,
+      actor_email: actor?.email || null,
+      actor_name: actor?.name || actor?.email || null,
+      notes: cleanNote || null,
+      details: payload.channels,
+    });
+
+    if (histErr) {
+      const missingTable =
+        histErr.code === '42P01' ||
+        histErr.code === 'PGRST205' ||
+        histErr.message?.includes('reconciliation_sessions');
+      if (missingTable) {
+        return { session: { ...session, source: 'local' }, savedToCloudHistory: false };
+      }
+      throw histErr;
+    }
+
+    return { session, savedToCloudHistory: true };
+  },
+
+  async applyStockReconciliation(
+    payload: StockReconciliationPayload,
+    actor?: { email?: string; name?: string }
+  ): Promise<{ session: ReconciliationSession; savedToCloudHistory: boolean }> {
+    const client = db();
+    if (!payload.lines || payload.lines.length === 0) {
+      throw new Error('يجب إدخال جرد فعلي لصنف واحد على الأقل قبل الاعتماد');
+    }
+
+    const normalizedLines: StockReconciliationLine[] = payload.lines.map((line) => {
+      const actualQty =
+        line.itemType === 'fabric'
+          ? Math.max(0, Math.round((Number(line.actualQty) || 0) * 1000) / 1000)
+          : Math.max(0, Math.trunc(Number(line.actualQty) || 0));
+      const systemQty =
+        line.itemType === 'fabric'
+          ? Math.round((Number(line.systemQty) || 0) * 1000) / 1000
+          : Math.round((Number(line.systemQty) || 0) * 1000) / 1000;
+      const qtyDelta = Math.round((actualQty - systemQty) * 1000) / 1000;
+      const unitCost = Math.round((Number(line.unitCost) || 0) * 10000) / 10000;
+      const valueDelta = Math.round(qtyDelta * unitCost * 100) / 100;
+      return {
+        itemType: line.itemType,
+        itemId: line.itemId,
+        itemName: line.itemName,
+        unitLabel: line.unitLabel,
+        systemQty,
+        actualQty,
+        qtyDelta,
+        unitCost,
+        valueDelta,
+        note: line.note?.trim() || '',
+      };
+    });
+
+    const systemValue =
+      Math.round(normalizedLines.reduce((s, l) => s + l.systemQty * l.unitCost, 0) * 100) / 100;
+    const actualValue =
+      Math.round(normalizedLines.reduce((s, l) => s + l.actualQty * l.unitCost, 0) * 100) / 100;
+    const varianceValue = Math.round((actualValue - systemValue) * 100) / 100;
+    const adjustedCount = payload.postAdjustments
+      ? normalizedLines.filter((l) =>
+          l.itemType === 'finished_good'
+            ? Math.abs(l.qtyDelta) >= 1
+            : Math.abs(l.qtyDelta) >= 0.001
+        ).length
+      : 0;
+
+    const cleanNotes = payload.notes?.trim() || null;
+
+    // 1) Try atomic SQL RPC (Migration 022)
+    const { data: rpcSessionId, error: rpcErr } = await client.rpc('apply_stock_reconciliation', {
+      p_reconciliation_number: payload.reconciliationNumber,
+      p_stock_scope: payload.stockScope || 'all',
+      p_items: normalizedLines.map((l) => ({
+        itemType: l.itemType,
+        itemId: l.itemId,
+        itemName: l.itemName,
+        unitLabel: l.unitLabel,
+        actualQty: l.actualQty,
+        note: l.note || '',
+      })),
+      p_notes: cleanNotes,
+      p_post_adjustments: payload.postAdjustments,
+    });
+
+    if (!rpcErr) {
+      const session: ReconciliationSession = {
+        id: String(rpcSessionId || newUuid()),
+        reconciliationNumber: payload.reconciliationNumber,
+        recType: 'stock',
+        stockScope: payload.stockScope,
+        reconciledAt: new Date().toISOString(),
+        systemValue,
+        actualValue,
+        varianceValue,
+        itemsCounted: normalizedLines.length,
+        itemsAdjusted: adjustedCount,
+        adjustmentPosted: payload.postAdjustments && adjustedCount > 0,
+        actorEmail: actor?.email,
+        actorName: actor?.name || actor?.email,
+        notes: cleanNotes || undefined,
+        details: normalizedLines,
+        source: 'cloud',
+      };
+      return { session, savedToCloudHistory: true };
+    }
+
+    const missingFn =
+      rpcErr.code === '42883' ||
+      rpcErr.code === 'PGRST202' ||
+      rpcErr.message?.includes('apply_stock_reconciliation');
+    if (!missingFn) throw rpcErr;
+
+    // 2) Seamless fallback when Migration 022 hasn't been executed yet
+    const sessionId = newUuid();
+    const nowIso = new Date().toISOString();
+
+    if (payload.postAdjustments) {
+      for (const line of normalizedLines) {
+        const hasDiff =
+          line.itemType === 'finished_good'
+            ? Math.abs(line.qtyDelta) >= 1
+            : Math.abs(line.qtyDelta) >= 0.001;
+        if (!hasDiff) continue;
+
+        const moveNotes = `تسوية جرد (${payload.reconciliationNumber})${
+          line.note || cleanNotes ? ` — ${line.note || cleanNotes}` : ''
+        }`;
+
+        if (line.itemType === 'fabric') {
+          const { error: uErr } = await client
+            .from('fabrics')
+            .update({ stock_qty: line.actualQty })
+            .eq('id', line.itemId);
+          if (uErr) throw uErr;
+
+          await client.from('inventory_movements').insert({
+            item_type: 'fabric',
+            fabric_id: line.itemId,
+            movement_type: 'adjustment',
+            qty_delta: line.qtyDelta,
+            unit_cost: line.unitCost,
+            reference_type: 'reconciliation',
+            reference_id: sessionId,
+            notes: moveNotes,
+          });
+        } else if (line.itemType === 'trim') {
+          const { error: uErr } = await client
+            .from('trims')
+            .update({ stock_qty: line.actualQty })
+            .eq('id', line.itemId);
+          if (uErr) throw uErr;
+
+          await client.from('inventory_movements').insert({
+            item_type: 'trim',
+            trim_id: line.itemId,
+            movement_type: 'adjustment',
+            qty_delta: line.qtyDelta,
+            unit_cost: line.unitCost,
+            reference_type: 'reconciliation',
+            reference_id: sessionId,
+            notes: moveNotes,
+          });
+        } else if (line.itemType === 'finished_good') {
+          const { error: uErr } = await client
+            .from('model_variants')
+            .update({ finished_goods_qty: Math.trunc(line.actualQty) })
+            .eq('id', line.itemId);
+          if (uErr) throw uErr;
+
+          await client.from('inventory_movements').insert({
+            item_type: 'finished_good',
+            variant_id: line.itemId,
+            movement_type: 'adjustment',
+            qty_delta: Math.trunc(line.qtyDelta),
+            unit_cost: line.unitCost,
+            reference_type: 'reconciliation',
+            reference_id: sessionId,
+            notes: moveNotes,
+          });
+        }
+      }
+    }
+
+    const session: ReconciliationSession = {
+      id: sessionId,
+      reconciliationNumber: payload.reconciliationNumber,
+      recType: 'stock',
+      stockScope: payload.stockScope,
+      reconciledAt: nowIso,
+      systemValue,
+      actualValue,
+      varianceValue,
+      itemsCounted: normalizedLines.length,
+      itemsAdjusted: adjustedCount,
+      adjustmentPosted: payload.postAdjustments && adjustedCount > 0,
+      actorEmail: actor?.email,
+      actorName: actor?.name || actor?.email,
+      notes: cleanNotes || undefined,
+      details: normalizedLines,
+      source: 'local',
+    };
+
+    const { error: histErr } = await client.from('reconciliation_sessions').insert({
+      id: sessionId,
+      reconciliation_number: payload.reconciliationNumber,
+      rec_type: 'stock',
+      stock_scope: payload.stockScope,
+      reconciled_at: nowIso,
+      system_value: systemValue,
+      actual_value: actualValue,
+      variance_value: varianceValue,
+      items_counted: normalizedLines.length,
+      items_adjusted: adjustedCount,
+      adjustment_posted: payload.postAdjustments && adjustedCount > 0,
+      actor_email: actor?.email || null,
+      actor_name: actor?.name || actor?.email || null,
+      notes: cleanNotes,
+      details: normalizedLines,
+    });
+
+    if (!histErr) {
+      return { session: { ...session, source: 'cloud' }, savedToCloudHistory: true };
+    }
+
+    return { session, savedToCloudHistory: false };
   },
 };

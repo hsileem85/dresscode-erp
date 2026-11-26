@@ -12,6 +12,7 @@ import {
   LogIn,
   LogOut,
   Receipt,
+  Scale,
   Scissors,
   Settings2,
   ShieldCheck,
@@ -134,6 +135,13 @@ const NAV_SECTIONS: { title?: string; items: NavItem[] }[] = [
         label: 'المصروفات والخزنة',
         sublabel: 'المتاح ورأس مال الشركاء',
         icon: Wallet,
+      },
+      {
+        id: 'reconciliation',
+        label: 'الجرد والتسوية',
+        sublabel: 'جرد الخزنة والمخزون وفروق العجز والزيادة',
+        icon: Scale,
+        badge: 'جديد',
       },
       {
         id: 'reports',

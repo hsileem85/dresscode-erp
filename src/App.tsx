@@ -17,6 +17,7 @@ import { MaterialsView } from './components/materials/MaterialsView';
 import { ModelsBOMView } from './components/models/ModelsBOMView';
 import { ProductionView } from './components/production/ProductionView';
 import { PurchasesView } from './components/purchases/PurchasesView';
+import { ReconciliationView } from './components/reconciliation/ReconciliationView';
 import { ReportsView } from './components/reports/ReportsView';
 import { SalesView } from './components/sales/SalesView';
 import { WorkflowHubView } from './components/workflow/WorkflowHubView';
@@ -105,6 +106,7 @@ const ERPShell: React.FC = () => {
           {activeTab === 'sales' && <SalesView />}
           {activeTab === 'customers' && <CustomersView />}
           {activeTab === 'expenses' && <ExpensesCashboxView />}
+          {activeTab === 'reconciliation' && <ReconciliationView />}
           {activeTab === 'reports' && <ReportsView />}
           {activeTab === 'audit' && <AuditTrailView />}
           {activeTab === 'excel' && <ExcelImportExportView />}

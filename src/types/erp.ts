@@ -10,6 +10,7 @@ export type NavTab =
   | 'sales'
   | 'customers'
   | 'expenses'
+  | 'reconciliation'
   | 'reports'
   | 'audit'
   | 'basicdata'
@@ -465,3 +466,74 @@ export interface SalesExchangeReturnPayload {
   priceDiff?: number;
   notes?: string;
 }
+
+export type ReconciliationType = 'cash' | 'stock';
+export type StockReconciliationScope = 'all' | 'fabric' | 'trim' | 'finished_good';
+export type StockReconciliationItemType = 'fabric' | 'trim' | 'finished_good';
+
+export interface CashChannelCount {
+  id: string;
+  label: string;
+  amount: number;
+}
+
+export interface StockReconciliationLine {
+  itemType: StockReconciliationItemType;
+  itemId: string;
+  itemName: string;
+  unitLabel: string;
+  systemQty: number;
+  actualQty: number;
+  qtyDelta: number;
+  unitCost: number;
+  valueDelta: number;
+  note?: string;
+}
+
+export interface ReconciliationSession {
+  id: string;
+  reconciliationNumber: string;
+  recType: ReconciliationType;
+  stockScope?: StockReconciliationScope | string | null;
+  reconciledAt: string;
+  systemValue: number;
+  actualValue: number;
+  varianceValue: number;
+  itemsCounted: number;
+  itemsAdjusted: number;
+  adjustmentPosted: boolean;
+  actorEmail?: string;
+  actorName?: string;
+  notes?: string;
+  details: CashChannelCount[] | StockReconciliationLine[];
+  source?: 'cloud' | 'local';
+}
+
+export interface CashReconciliationPayload {
+  reconciliationNumber: string;
+  systemCash: number;
+  actualCash: number;
+  channels: CashChannelCount[];
+  postAdjustment: boolean;
+  affectPnl: boolean;
+  paymentMethod?: string;
+  notes?: string;
+}
+
+export interface StockReconciliationPayload {
+  reconciliationNumber: string;
+  stockScope: StockReconciliationScope;
+  postAdjustments: boolean;
+  notes?: string;
+  lines: {
+    itemType: StockReconciliationItemType;
+    itemId: string;
+    itemName: string;
+    unitLabel: string;
+    systemQty: number;
+    actualQty: number;
+    unitCost: number;
+    note?: string;
+  }[];
+}
+
