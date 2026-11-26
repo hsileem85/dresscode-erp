@@ -40,6 +40,8 @@ export const SalesView: React.FC = () => {
   } = useERP();
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [busySaleId, setBusySaleId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -199,12 +201,35 @@ export const SalesView: React.FC = () => {
   };
 
   const draftTotal = useMemo(() => {
-    const sub = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-    return Math.max(0, sub - discountAmount + shippingFee);
+    const sub = items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unitPrice) || 0), 0);
+    return Math.max(0, Math.round((sub - (Number(discountAmount) || 0) + (Number(shippingFee) || 0)) * 100) / 100);
   }, [items, discountAmount, shippingFee]);
+
+  const stockShortages = useMemo(() => {
+    const reqByVar = new Map<string, number>();
+    for (const it of items) {
+      if (!it.variantId) continue;
+      reqByVar.set(it.variantId, (reqByVar.get(it.variantId) || 0) + toWholeQty(it.quantity, 1));
+    }
+    const shortages: { variantId: string; label: string; required: number; available: number }[] = [];
+    for (const [varId, required] of reqByVar.entries()) {
+      const v = allVariants.find((x) => x.id === varId);
+      if (v && v.finishedGoodsQty < required) {
+        shortages.push({
+          variantId: varId,
+          label: `${v.modelName} (${v.color} - ${v.size})`,
+          required,
+          available: v.finishedGoodsQty,
+        });
+      }
+    }
+    return shortages;
+  }, [items, allVariants]);
 
   const openModal = () => {
     const first = allVariants.find((v) => v.finishedGoodsQty > 0) || allVariants[0];
+    setFormError(null);
+    setSavingOrder(false);
     setCustomerId('');
     setCustomerPhone('');
     setCustomerName('');
@@ -212,7 +237,7 @@ export const SalesView: React.FC = () => {
     setDiscountAmount(0);
     setShippingFee(0);
     setFulfillmentStatus('مكتمل');
-    setConfirmImmediately(true);
+    setConfirmImmediately(Boolean(first && first.finishedGoodsQty > 0));
     const initialItems = first
       ? [{ variantId: first.id, quantity: 1, unitPrice: first.retailPrice }]
       : [];
@@ -221,56 +246,122 @@ export const SalesView: React.FC = () => {
     setModalOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customerName.trim() || items.length === 0) return;
-
-    // Auto-create customer if phone/name provided and not linked yet
-    let resolvedCustomerId: string | null = customerId || null;
-    if (!resolvedCustomerId && customerPhone.trim()) {
-      const digits = customerPhone.replace(/[^\d]/g, '');
-      const existingByPhone = state.customers.find(
-        (c) => (c.phone || '').replace(/[^\d]/g, '') === digits
-      );
-      if (existingByPhone) {
-        resolvedCustomerId = existingByPhone.id;
-      } else {
-        const newCustId = newUuid();
-        saveCustomer({
-          id: newCustId,
-          name: customerName.trim(),
-          phone: customerPhone.trim(),
-          platform,
-          governorate: '',
-          customerType: 'جديد',
-          notes: 'أُضيف تلقائياً من شاشة الطلبات',
-        });
-        resolvedCustomerId = newCustId;
+  const generateNextOrderNumber = () => {
+    let maxSeq = state.salesOrders.length;
+    const existingSet = new Set<string>();
+    for (const so of state.salesOrders) {
+      if (so.orderNumber) {
+        existingSet.add(so.orderNumber);
+        const m = so.orderNumber.match(/^DC-ORD-(\d+)/i);
+        if (m) {
+          const n = parseInt(m[1], 10);
+          if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+        }
       }
     }
+    let nextSeq = maxSeq + 1;
+    let candidate = `DC-ORD-${String(nextSeq).padStart(3, '0')}`;
+    while (existingSet.has(candidate)) {
+      nextSeq += 1;
+      candidate = `DC-ORD-${String(nextSeq).padStart(3, '0')}`;
+    }
+    return candidate;
+  };
 
-    const orderNumber = `DC-ORD-${String(state.salesOrders.length + 1).padStart(3, '0')}`;
-    const channel: SalesChannel =
-      platform === 'المتجر'
-        ? 'online_store'
-        : platform === 'مباشر'
-        ? 'retail'
-        : 'social_media';
-    const safePaid = Math.min(draftTotal, Math.max(0, Number(paidAmount) || 0));
-    await createSalesOrder({
-      orderNumber,
-      customerId: resolvedCustomerId,
-      customerName: customerName.trim(),
-      channel,
-      platform,
-      discountAmount: Number(discountAmount) || 0,
-      shippingFee: Number(shippingFee) || 0,
-      paidAmount: safePaid,
-      fulfillmentStatus,
-      confirmImmediately,
-      items: items.map((it) => ({ ...it, quantity: toWholeQty(it.quantity, 1) })),
-    });
-    setModalOpen(false);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (savingOrder) return;
+    setFormError(null);
+
+    if (!customerName.trim()) {
+      setFormError('يرجى إدخال اسم العميل أولاً.');
+      return;
+    }
+
+    const validItems = items
+      .filter((it) => Boolean(it.variantId))
+      .map((it) => ({
+        variantId: it.variantId,
+        quantity: toWholeQty(it.quantity, 1),
+        unitPrice: Math.max(0, Number(it.unitPrice) || 0),
+      }));
+
+    if (validItems.length === 0) {
+      setFormError('يرجى إضافة منتج واحد على الأقل (لون ومقاس) قبل حفظ الطلب.');
+      return;
+    }
+
+    if (confirmImmediately && stockShortages.length > 0) {
+      const firstShort = stockShortages[0];
+      setFormError(
+        `المخزون غير كافٍ للصنف «${firstShort.label}»: المطلوب ${firstShort.required} والمتاح ${firstShort.available}. يمكنك إلغاء علامة «تأكيد الطلب وخصم المخزون فوراً» لحفظه كمسودة لحين توفر المخزون.`
+      );
+      return;
+    }
+
+    setSavingOrder(true);
+    try {
+      // Auto-create customer if phone/name provided and not linked yet (AWAITED so FK exists in DB!)
+      let resolvedCustomerId: string | null = customerId || null;
+      if (!resolvedCustomerId && customerPhone.trim()) {
+        const digits = customerPhone.replace(/[^\d]/g, '');
+        const existingByPhone = state.customers.find(
+          (c) => (c.phone || '').replace(/[^\d]/g, '') === digits
+        );
+        if (existingByPhone) {
+          resolvedCustomerId = existingByPhone.id;
+        } else {
+          const newCustId = newUuid();
+          await saveCustomer({
+            id: newCustId,
+            name: customerName.trim(),
+            phone: customerPhone.trim(),
+            platform,
+            governorate: '',
+            customerType: 'جديد',
+            notes: 'أُضيف تلقائياً من شاشة الطلبات',
+          });
+          resolvedCustomerId = newCustId;
+        }
+      }
+
+      const orderNumber = generateNextOrderNumber();
+      const channel: SalesChannel =
+        platform === 'المتجر'
+          ? 'online_store'
+          : platform === 'مباشر'
+          ? 'retail'
+          : 'social_media';
+      const safePaid = Math.min(draftTotal, Math.max(0, Number(paidAmount) || 0));
+
+      await createSalesOrder({
+        orderNumber,
+        customerId: resolvedCustomerId,
+        customerName: customerName.trim(),
+        channel,
+        platform,
+        discountAmount: Math.max(0, Number(discountAmount) || 0),
+        shippingFee: Math.max(0, Number(shippingFee) || 0),
+        paidAmount: safePaid,
+        fulfillmentStatus,
+        confirmImmediately,
+        items: validItems,
+      });
+      setModalOpen(false);
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : typeof err === 'object' &&
+              err !== null &&
+              'message' in err &&
+              typeof (err as { message?: unknown }).message === 'string'
+            ? (err as { message: string }).message
+            : 'تعذر حفظ طلب البيع. يرجى مراجعة البيانات والمحاولة مرة أخرى.';
+      setFormError(message);
+    } finally {
+      setSavingOrder(false);
+    }
   };
 
   const handleRecordPayment = async (e: React.FormEvent) => {
@@ -811,18 +902,21 @@ export const SalesView: React.FC = () => {
       {/* New Sales Order Modal */}
       <Modal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={() => {
+          if (!savingOrder) setModalOpen(false);
+        }}
         title="تسجيل طلب بيع جديد"
         subtitle="اختر العميل والمنتج وسجّل المبلغ المدفوع ليُحسب المتبقي (الدين) وحالة الدفع تلقائياً"
         maxWidthClass="max-w-2xl"
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs font-semibold mb-1">اختر من العملاء</label>
               <select
                 value={customerId}
                 onChange={(e) => {
+                  setFormError(null);
                   setCustomerId(e.target.value);
                   const found = state.customers.find((c) => c.id === e.target.value);
                   if (found) {
@@ -848,7 +942,10 @@ export const SalesView: React.FC = () => {
               <input
                 type="tel"
                 value={customerPhone}
-                onChange={(e) => handlePhoneLookup(e.target.value)}
+                onChange={(e) => {
+                  setFormError(null);
+                  handlePhoneLookup(e.target.value);
+                }}
                 placeholder="01xxxxxxxxx"
                 className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs tabular-nums"
               />
@@ -859,7 +956,10 @@ export const SalesView: React.FC = () => {
                 type="text"
                 required
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
+                onChange={(e) => {
+                  setFormError(null);
+                  setCustomerName(e.target.value);
+                }}
                 placeholder="مثال: هبةالله ربيع"
                 className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs"
               />
@@ -885,23 +985,37 @@ export const SalesView: React.FC = () => {
               <span className="text-xs font-bold">الأصناف المطلوبة:</span>
               <button
                 type="button"
+                disabled={allVariants.length === 0}
                 onClick={() => {
-                  const v = allVariants[0];
+                  setFormError(null);
+                  const v = allVariants.find((x) => x.finishedGoodsQty > 0) || allVariants[0];
                   if (v) {
                     const next = [...items, { variantId: v.id, quantity: 1, unitPrice: v.retailPrice }];
                     setItems(next);
-                    setPaidAmount(
-                      next.reduce((s, r) => s + r.quantity * r.unitPrice, 0) -
-                        discountAmount +
-                        shippingFee
+                    const nextTotal = Math.max(
+                      0,
+                      Math.round(
+                        (next.reduce((s, r) => s + r.quantity * r.unitPrice, 0) -
+                          discountAmount +
+                          shippingFee) *
+                          100
+                      ) / 100
                     );
+                    setPaidAmount(nextTotal);
                   }
                 }}
-                className="text-xs bg-[#F6EFE7] text-[#8E6742] font-bold px-2.5 py-1 rounded-lg cursor-pointer"
+                className="text-xs bg-[#F6EFE7] text-[#8E6742] font-bold px-2.5 py-1 rounded-lg cursor-pointer disabled:opacity-40"
               >
                 + إضافة منتج
               </button>
             </div>
+
+            {allVariants.length === 0 && (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-900 font-semibold">
+                لا توجد أصناف (ألوان/مقاسات) مسجلة للموديلات بعد. يرجى إضافة الألوان والمقاسات من شاشة
+                «الموديلات والباترون» أو «أوامر التصنيع» أولاً.
+              </div>
+            )}
 
             {hasDuplicateVariants && (
               <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
@@ -927,6 +1041,7 @@ export const SalesView: React.FC = () => {
                 <select
                   value={it.variantId}
                   onChange={(e) => {
+                    setFormError(null);
                     const v = allVariants.find((x) => x.id === e.target.value);
                     setItems((prev) =>
                       prev.map((row, i) =>
@@ -934,7 +1049,7 @@ export const SalesView: React.FC = () => {
                           ? {
                               ...row,
                               variantId: e.target.value,
-                              unitPrice: v?.retailPrice || row.unitPrice,
+                              unitPrice: v?.retailPrice ?? row.unitPrice,
                             }
                           : row
                       )
@@ -956,13 +1071,14 @@ export const SalesView: React.FC = () => {
                   pattern="[0-9]*"
                   value={it.quantity || ''}
                   onKeyDown={blockNonIntegerKey}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setFormError(null);
                     setItems((prev) =>
                       prev.map((row, i) =>
                         i === idx ? { ...row, quantity: toWholeQty(e.target.value, 0) } : row
                       )
-                    )
-                  }
+                    );
+                  }}
                   onBlur={() =>
                     setItems((prev) =>
                       prev.map((row, i) =>
@@ -977,19 +1093,26 @@ export const SalesView: React.FC = () => {
                 <input
                   type="number"
                   min="0"
+                  step="any"
                   value={it.unitPrice}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setFormError(null);
                     setItems((prev) =>
                       prev.map((row, i) =>
-                        i === idx ? { ...row, unitPrice: Number(e.target.value) } : row
+                        i === idx ? { ...row, unitPrice: Number(e.target.value) || 0 } : row
                       )
-                    )
-                  }
+                    );
+                  }}
+                  placeholder="السعر"
+                  aria-label="سعر القطعة"
                   className="sm:col-span-3 rounded-lg border border-[#E5E3DD] bg-white px-2 py-1.5 text-xs tabular-nums"
                 />
                 <button
                   type="button"
-                  onClick={() => setItems((prev) => prev.filter((_, i) => i !== idx))}
+                  onClick={() => {
+                    setFormError(null);
+                    setItems((prev) => prev.filter((_, i) => i !== idx));
+                  }}
                   className="sm:col-span-1 text-[#9C9990] hover:text-red-600 flex justify-center cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -1004,8 +1127,9 @@ export const SalesView: React.FC = () => {
               <input
                 type="number"
                 min="0"
+                step="any"
                 value={discountAmount}
-                onChange={(e) => setDiscountAmount(Number(e.target.value))}
+                onChange={(e) => setDiscountAmount(Number(e.target.value) || 0)}
                 className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs tabular-nums"
               />
             </div>
@@ -1014,8 +1138,9 @@ export const SalesView: React.FC = () => {
               <input
                 type="number"
                 min="0"
+                step="any"
                 value={shippingFee}
-                onChange={(e) => setShippingFee(Number(e.target.value))}
+                onChange={(e) => setShippingFee(Number(e.target.value) || 0)}
                 className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs tabular-nums"
               />
             </div>
@@ -1024,8 +1149,9 @@ export const SalesView: React.FC = () => {
               <input
                 type="number"
                 min="0"
+                step="any"
                 value={paidAmount}
-                onChange={(e) => setPaidAmount(Number(e.target.value))}
+                onChange={(e) => setPaidAmount(Number(e.target.value) || 0)}
                 className="w-full rounded-xl border border-[#E5E3DD] px-3 py-2 text-xs tabular-nums font-bold text-emerald-700"
               />
             </div>
@@ -1058,18 +1184,69 @@ export const SalesView: React.FC = () => {
             <input
               type="checkbox"
               checked={confirmImmediately}
-              onChange={(e) => setConfirmImmediately(e.target.checked)}
+              onChange={(e) => {
+                setFormError(null);
+                setConfirmImmediately(e.target.checked);
+              }}
               className="accent-[#A67C52]"
             />
             <span>تأكيد الطلب وخصم المخزون فوراً</span>
           </label>
 
-          <div className="flex justify-end pt-2 border-t border-[#E5E3DD]">
+          {confirmImmediately && stockShortages.length > 0 && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900">
+              <div className="flex items-start gap-2 font-semibold">
+                <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <div>
+                  <div>
+                    تنبيه مخزون: الصنف «{stockShortages[0].label}» متاح منه{' '}
+                    {stockShortages[0].available} فقط (المطلوب {stockShortages[0].required}).
+                  </div>
+                  <div className="text-[11px] font-normal text-amber-800 mt-0.5">
+                    لا يمكن خصم المخزون فوراً بكمية أكبر من المتاح — يمكنك حفظ الطلب كمسودة الآن
+                    وتأكيده بعد التصنيع أو الجرد.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmImmediately(false);
+                  setFormError(null);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[11px] font-bold cursor-pointer shrink-0"
+              >
+                حفظ كمسودة (بدون خصم الآن)
+              </button>
+            </div>
+          )}
+
+          {formError && (
+            <div className="rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 flex items-start gap-2 text-xs font-bold text-red-800">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <span className="leading-relaxed">{formError}</span>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#E5E3DD]">
+            <button
+              type="button"
+              disabled={savingOrder}
+              onClick={() => setModalOpen(false)}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#6E6C66] hover:bg-[#F3F2EE] cursor-pointer disabled:opacity-50"
+            >
+              إلغاء
+            </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-xl bg-[#1A1A1E] text-white text-xs font-bold cursor-pointer"
+              disabled={savingOrder}
+              className="px-5 py-2 rounded-xl bg-[#1A1A1E] hover:bg-[#2E2E35] text-white text-xs font-bold cursor-pointer disabled:opacity-50"
             >
-              حفظ الطلب
+              {savingOrder
+                ? 'جاري الحفظ...'
+                : confirmImmediately
+                  ? 'حفظ وتأكيد الطلب'
+                  : 'حفظ الطلب (مسودة)'}
             </button>
           </div>
         </form>

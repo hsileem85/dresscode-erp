@@ -89,7 +89,7 @@ interface ERPContextValue {
   deleteLookupItem: (id: string) => void;
 
   // Customers CRM
-  saveCustomer: (customer: Customer) => void;
+  saveCustomer: (customer: Customer) => Promise<void>;
   deleteCustomer: (id: string) => void;
 
   // Expenses & Partner Capital
@@ -593,7 +593,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Customers CRM
-  const saveCustomer = (customer: Customer) => {
+  const saveCustomer = async (customer: Customer): Promise<void> => {
     setState((prev) => {
       const exists = prev.customers.some((c) => c.id === customer.id);
       return {
@@ -603,7 +603,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : [customer, ...prev.customers],
       };
     });
-    void runCloud(() => erpDb.upsertCustomer(customer));
+    if (cloudConnected) {
+      await runCloud(() => erpDb.upsertCustomer(customer));
+    }
   };
 
   const deleteCustomer = (id: string) => {
@@ -1965,51 +1967,112 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await runCloud(async () => {
         const saleId = await erpDb.createSalesOrder(payload);
         if (payload.confirmImmediately) {
-          await erpDb.confirmSalesOrder(saleId);
+          try {
+            await erpDb.confirmSalesOrder(saleId);
+          } catch (confirmErr) {
+            // Remove the orphaned draft order so retries never collide on order_number
+            try {
+              await erpDb.cleanupDraftSalesOrder(saleId);
+            } catch {
+              // ignore secondary cleanup error
+            }
+            throw confirmErr;
+          }
         }
       });
       return;
     }
-    const subtotal = payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-    const totalAmount = subtotal - payload.discountAmount + payload.shippingFee;
-    const paid = payload.paidAmount;
-    const remainingDebt = Math.max(totalAmount - paid, 0);
-    setState((prev) => ({
-      ...prev,
-      salesOrders: [
-        {
+
+    const subtotal =
+      Math.round(payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0) * 100) / 100;
+    const totalAmount = Math.max(
+      0,
+      Math.round((subtotal - payload.discountAmount + payload.shippingFee) * 100) / 100
+    );
+    const paid = Math.min(totalAmount, Math.max(0, Number(payload.paidAmount) || 0));
+    const remainingDebt = Math.max(Math.round((totalAmount - paid) * 100) / 100, 0);
+
+    // Offline stock validation when confirming immediately
+    if (payload.confirmImmediately) {
+      const qtyByVariant = new Map<string, number>();
+      for (const it of payload.items) {
+        qtyByVariant.set(it.variantId, (qtyByVariant.get(it.variantId) || 0) + it.quantity);
+      }
+      const allVars = state.models.flatMap((m) =>
+        m.variants.map((v) => ({ ...v, modelName: m.name }))
+      );
+      for (const [varId, reqQty] of qtyByVariant.entries()) {
+        const v = allVars.find((x) => x.id === varId);
+        if (v && v.finishedGoodsQty < reqQty) {
+          throw new Error(
+            `المخزون غير كافٍ للصنف ${v.modelName} (${v.color} - ${v.size}): المطلوب ${reqQty} والمتاح ${v.finishedGoodsQty}`
+          );
+        }
+      }
+    }
+
+    setState((prev) => {
+      const qtyByVariant = new Map<string, number>();
+      if (payload.confirmImmediately) {
+        for (const it of payload.items) {
+          qtyByVariant.set(it.variantId, (qtyByVariant.get(it.variantId) || 0) + it.quantity);
+        }
+      }
+      const allVars = prev.models.flatMap((m) => m.variants);
+      const mappedItems = payload.items.map((it) => {
+        const v = allVars.find((x) => x.id === it.variantId);
+        const unitCogs = v?.avgUnitCogs || 0;
+        return {
           id: newUuid(),
-          orderNumber: payload.orderNumber,
-          customerId: payload.customerId,
-          customerName: payload.customerName,
-          channel: payload.channel,
-          platform: payload.platform,
-          orderDate: new Date().toISOString().slice(0, 10),
-          status: payload.confirmImmediately ? 'confirmed' : 'draft',
-          fulfillmentStatus: payload.fulfillmentStatus,
-          subtotal,
-          discountAmount: payload.discountAmount,
-          shippingFee: payload.shippingFee,
-          totalAmount,
-          paidAmount: paid,
-          remainingDebt,
-          paymentStatus: computePaymentStatus(totalAmount, paid),
-          totalCogs: 0,
-          grossProfit: subtotal - payload.discountAmount,
-          notes: payload.notes,
-          items: payload.items.map((it) => ({
+          variantId: it.variantId,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          unitCogsSnapshot: unitCogs,
+          lineTotal: Math.round(it.quantity * it.unitPrice * 100) / 100,
+          lineCogs: Math.round(it.quantity * unitCogs * 100) / 100,
+        };
+      });
+      const totalCogs = Math.round(mappedItems.reduce((s, it) => s + it.lineCogs, 0) * 100) / 100;
+      return {
+        ...prev,
+        models: payload.confirmImmediately
+          ? prev.models.map((m) => ({
+              ...m,
+              variants: m.variants.map((v) => {
+                const deduct = qtyByVariant.get(v.id) || 0;
+                return deduct > 0
+                  ? { ...v, finishedGoodsQty: Math.max(0, v.finishedGoodsQty - deduct) }
+                  : v;
+              }),
+            }))
+          : prev.models,
+        salesOrders: [
+          {
             id: newUuid(),
-            variantId: it.variantId,
-            quantity: it.quantity,
-            unitPrice: it.unitPrice,
-            unitCogsSnapshot: 0,
-            lineTotal: it.quantity * it.unitPrice,
-            lineCogs: 0,
-          })),
-        },
-        ...prev.salesOrders,
-      ],
-    }));
+            orderNumber: payload.orderNumber,
+            customerId: payload.customerId,
+            customerName: payload.customerName,
+            channel: payload.channel,
+            platform: payload.platform,
+            orderDate: new Date().toISOString().slice(0, 10),
+            status: payload.confirmImmediately ? 'confirmed' : 'draft',
+            fulfillmentStatus: payload.fulfillmentStatus,
+            subtotal,
+            discountAmount: payload.discountAmount,
+            shippingFee: payload.shippingFee,
+            totalAmount,
+            paidAmount: paid,
+            remainingDebt,
+            paymentStatus: computePaymentStatus(totalAmount, paid),
+            totalCogs,
+            grossProfit: Math.round((subtotal - payload.discountAmount - totalCogs) * 100) / 100,
+            notes: payload.notes,
+            items: mappedItems,
+          },
+          ...prev.salesOrders,
+        ],
+      };
+    });
   };
 
   const confirmSalesOrder = async (saleId: string) => {

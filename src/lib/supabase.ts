@@ -1862,24 +1862,58 @@ export const erpDb = {
   }) {
     const client = db();
     const id = newUuid();
-    const subtotal = payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-    const totalAmount = subtotal - payload.discountAmount + payload.shippingFee;
-    const { error: sErr } = await client.from('sales_orders').insert({
-      id,
-      order_number: payload.orderNumber,
-      customer_id: payload.customerId || null,
-      customer_name: payload.customerName,
-      channel: payload.channel,
-      platform: payload.platform,
-      fulfillment_status: payload.fulfillmentStatus,
-      status: 'draft',
-      subtotal,
-      discount_amount: payload.discountAmount,
-      shipping_fee: payload.shippingFee,
-      total_amount: totalAmount,
-      paid_amount: payload.paidAmount,
-      notes: payload.notes || null,
-    });
+    const subtotal =
+      Math.round(payload.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0) * 100) / 100;
+    const discountAmount = Math.max(0, Math.round((Number(payload.discountAmount) || 0) * 100) / 100);
+    const shippingFee = Math.max(0, Math.round((Number(payload.shippingFee) || 0) * 100) / 100);
+    const totalAmount = Math.max(0, Math.round((subtotal - discountAmount + shippingFee) * 100) / 100);
+    const paidAmount = Math.min(totalAmount, Math.max(0, Math.round((Number(payload.paidAmount) || 0) * 100) / 100));
+
+    const tryInsertHeader = async (orderNumber: string) => {
+      const fullRow = {
+        id,
+        order_number: orderNumber,
+        customer_id: payload.customerId || null,
+        customer_name: payload.customerName,
+        channel: payload.channel,
+        platform: payload.platform,
+        fulfillment_status: payload.fulfillmentStatus,
+        status: 'draft',
+        subtotal,
+        discount_amount: discountAmount,
+        shipping_fee: shippingFee,
+        total_amount: totalAmount,
+        paid_amount: paidAmount,
+        notes: payload.notes || null,
+      };
+      let { error } = await client.from('sales_orders').insert(fullRow);
+      // Graceful fallback if Migration 003 columns (platform / fulfillment_status) haven't been run yet
+      if (error && error.message?.includes('column')) {
+        const retry = await client.from('sales_orders').insert({
+          id,
+          order_number: orderNumber,
+          customer_id: payload.customerId || null,
+          customer_name: payload.customerName,
+          channel: payload.channel,
+          status: 'draft',
+          subtotal,
+          discount_amount: discountAmount,
+          shipping_fee: shippingFee,
+          total_amount: totalAmount,
+          paid_amount: paidAmount,
+          notes: payload.notes || null,
+        });
+        error = retry.error;
+      }
+      return error;
+    };
+
+    let sErr = await tryInsertHeader(payload.orderNumber);
+    // If order_number collided with an existing row (e.g. after deletions or concurrent users), retry with a unique number
+    if (sErr && (sErr.code === '23505' || sErr.message?.includes('sales_orders_order_number_key'))) {
+      const uniqueSuffix = `${Date.now().toString().slice(-5)}`;
+      sErr = await tryInsertHeader(`${payload.orderNumber}-${uniqueSuffix}`);
+    }
     if (sErr) throw sErr;
 
     const { error: iErr } = await client.from('sales_order_items').insert(
@@ -1887,12 +1921,19 @@ export const erpDb = {
         id: newUuid(),
         sales_order_id: id,
         variant_id: it.variantId,
-        quantity: it.quantity,
-        unit_price: it.unitPrice,
+        quantity: Math.max(1, Math.trunc(Number(it.quantity) || 1)),
+        unit_price: Math.max(0, Math.round((Number(it.unitPrice) || 0) * 100) / 100),
       }))
     );
-    if (iErr) throw iErr;
+    if (iErr) {
+      await client.from('sales_orders').delete().eq('id', id);
+      throw iErr;
+    }
     return id;
+  },
+
+  async cleanupDraftSalesOrder(saleId: string) {
+    await db().from('sales_orders').delete().eq('id', saleId).eq('status', 'draft');
   },
 
   async confirmSalesOrder(saleId: string) {
