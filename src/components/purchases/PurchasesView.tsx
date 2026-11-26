@@ -392,6 +392,26 @@ export const PurchasesView: React.FC = () => {
     }
   };
 
+  const sortedFabrics = useMemo(
+    () =>
+      [...state.fabrics].sort((a, b) => {
+        const diff = (b.stockQty || 0) - (a.stockQty || 0);
+        if (diff !== 0) return diff;
+        return a.name.localeCompare(b.name, 'ar');
+      }),
+    [state.fabrics]
+  );
+
+  const sortedTrims = useMemo(
+    () =>
+      [...state.trims].sort((a, b) => {
+        const diff = (b.stockQty || 0) - (a.stockQty || 0);
+        if (diff !== 0) return diff;
+        return a.name.localeCompare(b.name, 'ar');
+      }),
+    [state.trims]
+  );
+
   const totalPurchases = state.purchaseOrders
     .filter((p) => p.status === 'received')
     .reduce((s, p) => s + p.totalAmount, 0);
@@ -464,11 +484,14 @@ export const PurchasesView: React.FC = () => {
       {/* Live Raw Material Stock Strip (Fabrics + Trims/Supplies) */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <PackagePlus className="w-4 h-4 text-[#A67C52]" />
             <h2 className="text-sm font-bold text-[#1A1A1E]">
               رصيد مخزن الخامات الحالي (أقمشة وكلف)
             </h2>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#FAF6F0] text-[#8E6742] border border-[#E8DAC6]">
+              مرتّب بالكمية (الأكبر أولاً)
+            </span>
           </div>
           <div className="inline-flex rounded-lg bg-[#F3F2EE] p-0.5 text-[11px] font-bold">
             {(
@@ -494,16 +517,18 @@ export const PurchasesView: React.FC = () => {
           </div>
         </div>
 
-        {(stockFilter === 'all' || stockFilter === 'fabrics') && state.fabrics.length > 0 && (
+        {(stockFilter === 'all' || stockFilter === 'fabrics') && sortedFabrics.length > 0 && (
           <div className="space-y-2">
             {stockFilter === 'all' && (
               <div className="text-[11px] font-bold text-[#6E6C66]">الأقمشة:</div>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {state.fabrics.map((f) => (
+              {sortedFabrics.map((f) => (
                 <div
                   key={f.id}
-                  className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 flex items-center justify-between gap-2"
+                  className={`rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 flex items-center justify-between gap-2 ${
+                    (f.stockQty || 0) <= 0 ? 'opacity-65' : ''
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-[#1A1A1E] truncate">{f.name}</div>
@@ -526,16 +551,18 @@ export const PurchasesView: React.FC = () => {
           </div>
         )}
 
-        {(stockFilter === 'all' || stockFilter === 'trims') && state.trims.length > 0 && (
+        {(stockFilter === 'all' || stockFilter === 'trims') && sortedTrims.length > 0 && (
           <div className="space-y-2">
             {stockFilter === 'all' && (
               <div className="text-[11px] font-bold text-[#6E6C66]">الكلف ومستلزمات التصنيع والبراند:</div>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {state.trims.map((t) => (
+              {sortedTrims.map((t) => (
                 <div
                   key={t.id}
-                  className="rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 flex items-center justify-between gap-2"
+                  className={`rounded-xl border border-[#EAE8E2] bg-[#FAF9F7] p-3 flex items-center justify-between gap-2 ${
+                    (t.stockQty || 0) <= 0 ? 'opacity-65' : ''
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-[#1A1A1E] truncate">{t.name}</div>

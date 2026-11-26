@@ -104,9 +104,17 @@ export const ProductionView: React.FC = () => {
 
   const allVariants = useMemo(
     () =>
-      state.models.flatMap((m) =>
-        m.variants.map((v) => ({ ...v, modelName: m.name, modelSku: m.sku }))
-      ),
+      state.models
+        .flatMap((m) =>
+          m.variants.map((v) => ({ ...v, modelName: m.name, modelSku: m.sku }))
+        )
+        .sort((a, b) => {
+          const diff = (b.finishedGoodsQty || 0) - (a.finishedGoodsQty || 0);
+          if (diff !== 0) return diff;
+          const nameCmp = a.modelName.localeCompare(b.modelName, 'ar');
+          if (nameCmp !== 0) return nameCmp;
+          return (a.variantSku || '').localeCompare(b.variantSku || '');
+        }),
     [state.models]
   );
 
@@ -930,12 +938,15 @@ export const ProductionView: React.FC = () => {
 
       {/* Finished Goods Inventory Matrix */}
       <div className="bg-white rounded-2xl border border-[#E5E3DD] overflow-hidden">
-        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[#E5E3DD] flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Boxes className="w-4 h-4 text-[#A67C52] shrink-0" />
             <h2 className="text-xs sm:text-sm font-bold text-[#1A1A1E]">
               مخزون المنتج التام حسب اللون والمقاس (Finished Goods)
             </h2>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#FAF6F0] text-[#8E6742] border border-[#E8DAC6]">
+              مرتّب بالكمية (الأكبر أولاً)
+            </span>
           </div>
         </div>
 
@@ -945,7 +956,10 @@ export const ProductionView: React.FC = () => {
             const links = linkedVariantCounts.get(v.id);
             const isLinked = Boolean(links && (links.salesCount > 0 || links.prodCount > 0));
             return (
-              <div key={v.id} className="p-4 space-y-2.5">
+              <div
+                key={v.id}
+                className={`p-4 space-y-2.5 ${(v.finishedGoodsQty || 0) <= 0 ? 'opacity-65' : ''}`}
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-bold text-sm text-[#1A1A1E] truncate">{v.modelName}</div>
@@ -1037,7 +1051,10 @@ export const ProductionView: React.FC = () => {
                 const links = linkedVariantCounts.get(v.id);
                 const isLinked = Boolean(links && (links.salesCount > 0 || links.prodCount > 0));
                 return (
-                  <tr key={v.id} className="hover:bg-[#FAF9F7]">
+                  <tr
+                    key={v.id}
+                    className={`hover:bg-[#FAF9F7] ${(v.finishedGoodsQty || 0) <= 0 ? 'opacity-65' : ''}`}
+                  >
                     <td className="py-3 px-4 font-mono text-xs">{v.variantSku}</td>
                     <td className="py-3 px-4 font-semibold">{v.modelName}</td>
                     <td className="py-3 px-4 text-xs">
