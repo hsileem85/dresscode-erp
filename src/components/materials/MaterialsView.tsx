@@ -137,7 +137,7 @@ const SUPPLY_TAB_META: Record<
       { name: 'أزرار', category: 'أزرار', purchaseUnit: 'dozen', unitsPerPack: 12, unitLabel: 'زر' },
       { name: 'زراير كبس', category: 'أزرار', purchaseUnit: 'pack', unitsPerPack: 100, unitLabel: 'زر' },
       { name: 'سحاب مخفي', category: 'سحابات', purchaseUnit: 'dozen', unitsPerPack: 12, unitLabel: 'سحاب' },
-      { name: 'أستيك / كلف إضافية', category: 'إكسسوارات', purchaseUnit: 'roll', unitsPerPack: 25, unitLabel: 'متر' },
+      { name: 'أستيك / كلف إضافية', category: 'إكسسوارات', purchaseUnit: 'meter', unitsPerPack: 1, unitLabel: 'متر' },
       { name: 'فازلين / حشو', category: 'إكسسوارات', purchaseUnit: 'roll', unitsPerPack: 50, unitLabel: 'متر' },
     ],
   },
@@ -383,7 +383,7 @@ export const MaterialsView: React.FC = () => {
     const defaultQty =
       unit === 'dozen'
         ? 12
-        : unit === 'piece'
+        : unit === 'piece' || unit === 'meter'
         ? 1
         : unit === 'weight'
         ? 1000
@@ -392,7 +392,14 @@ export const MaterialsView: React.FC = () => {
       ...prev,
       purchaseUnit: unit,
       unitsPerPack: defaultQty,
-      unitLabel: unit === 'weight' ? 'جرام' : prev.unitLabel === 'جرام' ? 'قطعة' : prev.unitLabel,
+      unitLabel:
+        unit === 'weight'
+          ? 'جرام'
+          : unit === 'meter'
+          ? 'متر'
+          : prev.unitLabel === 'جرام' || prev.unitLabel === 'متر'
+          ? 'قطعة'
+          : prev.unitLabel,
     }));
   };
 
@@ -1263,7 +1270,9 @@ export const MaterialsView: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-[#1A1A1E] mb-1.5">
-                سعر الشراء للعبوة / الدستة *
+                {trimForm.purchaseUnit === 'meter'
+                  ? 'سعر الشراء للمتر *'
+                  : 'سعر الشراء للعبوة / الدستة *'}
               </label>
               <input
                 type="number"

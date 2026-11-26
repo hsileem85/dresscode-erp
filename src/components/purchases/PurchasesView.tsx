@@ -353,8 +353,11 @@ export const PurchasesView: React.FC = () => {
             shippingAllocated,
           };
         }
-        const trimQty = toWholeQty(line.quantity, 1);
         const trim = state.trims.find((t) => t.id === line.refId);
+        const isMeterTrim = trim?.purchaseUnit === 'meter' || trim?.unitLabel === 'متر';
+        const trimQty = isMeterTrim
+          ? toDecimalQty(line.quantity, 0.01, 3)
+          : toWholeQty(line.quantity, 1);
         return {
           itemType: 'trim' as const,
           fabricId: null,
@@ -577,7 +580,11 @@ export const PurchasesView: React.FC = () => {
                         : 'bg-emerald-50 text-emerald-800'
                     }`}
                   >
-                    {formatNumber(t.stockQty, 0)} {t.unitLabel}
+                    {formatNumber(
+                      t.stockQty,
+                      t.purchaseUnit === 'meter' || t.unitLabel === 'متر' ? 2 : 0
+                    )}{' '}
+                    {t.unitLabel}
                   </span>
                 </div>
               ))}
@@ -986,13 +993,18 @@ export const PurchasesView: React.FC = () => {
             {lines.map((line, idx) => {
               const currencySymbol = CURRENCIES[state.currency]?.symbol || 'ج.م';
               const isFabric = line.itemType === 'fabric';
+              const selectedTrim = !isFabric
+                ? state.trims.find((t) => t.id === line.refId)
+                : undefined;
+              const allowDecimal =
+                isFabric ||
+                selectedTrim?.purchaseUnit === 'meter' ||
+                selectedTrim?.unitLabel === 'متر';
               const unitLabel = isFabric
                 ? FABRIC_UNIT_LABELS[
                     state.fabrics.find((f) => f.id === line.refId)?.unit || 'meter'
                   ]
-                : PURCHASE_UNIT_LABELS[
-                    state.trims.find((t) => t.id === line.refId)?.purchaseUnit || 'piece'
-                  ];
+                : PURCHASE_UNIT_LABELS[selectedTrim?.purchaseUnit || 'piece'];
               const alloc = poCalc.allocations[idx] || {
                 baseLineTotal: (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0),
                 shippingAllocated: 0,
@@ -1045,7 +1057,7 @@ export const PurchasesView: React.FC = () => {
                     <div className="sm:col-span-3">
                       <label className="block text-[11px] font-bold text-[#1A1A1E] mb-1">
                         الكمية ({unitLabel})
-                        {isFabric && (
+                        {allowDecimal && (
                           <span className="text-[10px] font-normal text-[#6E6C66] mr-1">
                             (يقبل كسور)
                           </span>
@@ -1054,15 +1066,15 @@ export const PurchasesView: React.FC = () => {
                       <div className="relative flex items-center">
                         <input
                           type="number"
-                          min={isFabric ? '0.01' : '1'}
-                          step={isFabric ? 'any' : '1'}
-                          inputMode={isFabric ? 'decimal' : 'numeric'}
-                          pattern={isFabric ? undefined : '[0-9]*'}
+                          min={allowDecimal ? '0.01' : '1'}
+                          step={allowDecimal ? 'any' : '1'}
+                          inputMode={allowDecimal ? 'decimal' : 'numeric'}
+                          pattern={allowDecimal ? undefined : '[0-9]*'}
                           value={line.qtyText !== undefined ? line.qtyText : line.quantity || ''}
-                          onKeyDown={isFabric ? blockInvalidDecimalKey : blockNonIntegerKey}
+                          onKeyDown={allowDecimal ? blockInvalidDecimalKey : blockNonIntegerKey}
                           onChange={(e) => {
                             const raw = e.target.value;
-                            const parsed = isFabric
+                            const parsed = allowDecimal
                               ? toDecimalQty(raw, 0, 3)
                               : toWholeQty(raw, 0);
                             setLines((prev) =>
@@ -1075,14 +1087,14 @@ export const PurchasesView: React.FC = () => {
                             setLines((prev) =>
                               prev.map((l, i) => {
                                 if (i !== idx) return l;
-                                const finalized = isFabric
+                                const finalized = allowDecimal
                                   ? toDecimalQty(l.quantity, 0.01, 3)
                                   : toWholeQty(l.quantity, 1);
                                 return { ...l, quantity: finalized, qtyText: String(finalized) };
                               })
                             )
                           }
-                          placeholder={isFabric ? 'مثال: 4.5' : 'عدد صحيح'}
+                          placeholder={allowDecimal ? 'مثال: 4.5' : 'عدد صحيح'}
                           aria-label={`الكمية (${unitLabel})`}
                           className="w-full rounded-lg border border-[#E5E3DD] bg-white pr-2.5 pl-12 py-2 text-xs font-bold text-[#1A1A1E] tabular-nums focus:outline-none focus:border-[#1A1A1E]"
                         />

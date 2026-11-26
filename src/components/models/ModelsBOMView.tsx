@@ -28,8 +28,9 @@ import type {
   ProductModel,
 } from '../../types/erp';
 import {
-  calculateModelCost,
+  blockInvalidDecimalKey,
   blockNonIntegerKey,
+  calculateModelCost,
   FABRIC_UNIT_LABELS,
   formatMoney,
   formatNumber,
@@ -38,6 +39,7 @@ import {
   getLaborStepUnitCost,
   getTrimLineCost,
   getTrimUnitCost,
+  toDecimalQty,
   toWholeQty,
 } from '../../utils/calculations';
 import { matchesSmartQuery } from '../../utils/search';
@@ -897,22 +899,36 @@ export const ModelsBOMView: React.FC = () => {
                           </div>
 
                           <div className="sm:col-span-3">
-                            <label className="block text-[10px] text-[#6E6C66] mb-1">
-                              الكمية للقطعة ({trim?.unitLabel || 'وحدة'})
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              value={line.quantity}
-                              onKeyDown={blockNonIntegerKey}
-                              onChange={(e) =>
-                                updateTrimLine(line.id, { quantity: toWholeQty(e.target.value, 0) })
-                              }
-                              className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
-                            />
+                            {(() => {
+                              const isMeterTrim =
+                                trim?.purchaseUnit === 'meter' || trim?.unitLabel === 'متر';
+                              return (
+                                <>
+                                  <label className="block text-[10px] text-[#6E6C66] mb-1">
+                                    الكمية للقطعة ({trim?.unitLabel || 'وحدة'})
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step={isMeterTrim ? 'any' : '1'}
+                                    inputMode={isMeterTrim ? 'decimal' : 'numeric'}
+                                    pattern={isMeterTrim ? undefined : '[0-9]*'}
+                                    value={line.quantity}
+                                    onKeyDown={
+                                      isMeterTrim ? blockInvalidDecimalKey : blockNonIntegerKey
+                                    }
+                                    onChange={(e) =>
+                                      updateTrimLine(line.id, {
+                                        quantity: isMeterTrim
+                                          ? toDecimalQty(e.target.value, 0, 3)
+                                          : toWholeQty(e.target.value, 0),
+                                      })
+                                    }
+                                    className="w-full rounded-lg border border-[#E5E3DD] bg-white px-2.5 py-1.5 text-xs tabular-nums focus:outline-none focus:border-[#A67C52]"
+                                  />
+                                </>
+                              );
+                            })()}
                           </div>
 
                           <div className="sm:col-span-2 text-left sm:text-center">

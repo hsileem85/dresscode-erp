@@ -196,6 +196,7 @@ export function formatNumber(value: number, decimals = 2): string {
 
 export const PURCHASE_UNIT_LABELS: Record<TrimPurchaseUnit, string> = {
   piece: 'قطعة',
+  meter: 'متر',
   dozen: 'دستة (12)',
   roll: 'لفة / رول',
   pack: 'عبوة / باكت',

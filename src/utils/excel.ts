@@ -295,6 +295,7 @@ export function mapRowsToTrims(
       const rawUnit = String(row[mapping.purchaseUnit] ?? '').toLowerCase();
       let purchaseUnit: TrimPurchaseUnit = 'pack';
       if (rawUnit.includes('دست') || rawUnit.includes('dozen')) purchaseUnit = 'dozen';
+      else if (rawUnit.includes('متر') || rawUnit.includes('meter')) purchaseUnit = 'meter';
       else if (rawUnit.includes('لف') || rawUnit.includes('رول') || rawUnit.includes('roll'))
         purchaseUnit = 'roll';
       else if (rawUnit.includes('بكر') || rawUnit.includes('cone')) purchaseUnit = 'cone';
@@ -312,6 +313,8 @@ export function mapRowsToTrims(
 
       const defaultUnits = purchaseUnit === 'dozen' ? 12 : purchaseUnit === 'weight' ? 1000 : 1;
       const unitsPerPack = Math.max(1, parseNum(row[mapping.unitsPerPack], defaultUnits));
+      const fallbackUnitLabel =
+        purchaseUnit === 'meter' ? 'متر' : purchaseUnit === 'weight' ? 'جرام' : 'قطعة';
 
       return {
         id: makeId(),
@@ -321,7 +324,7 @@ export function mapRowsToTrims(
         purchaseUnit,
         packPrice: parseNum(row[mapping.packPrice], 0),
         unitsPerPack,
-        unitLabel: String(row[mapping.unitLabel] ?? 'قطعة').trim() || 'قطعة',
+        unitLabel: String(row[mapping.unitLabel] ?? fallbackUnitLabel).trim() || fallbackUnitLabel,
         stockQty: 0,
         reorderLevel: 50,
       };

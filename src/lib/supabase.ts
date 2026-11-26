@@ -689,6 +689,15 @@ export const erpDb = {
     });
     if (!error) return;
 
+    if (
+      (error.code === '22P02' || error.message?.includes('trim_purchase_unit')) &&
+      t.purchaseUnit === 'meter'
+    ) {
+      throw new Error(
+        'لتفعيل وحدة الشراء «متر» للكلف في قاعدة البيانات، نفّذ السطر التالي في Supabase SQL Editor (ملف 023_trim_meter_unit.sql): ALTER TYPE trim_purchase_unit ADD VALUE IF NOT EXISTS \'meter\';'
+      );
+    }
+
     const missingCol =
       error.code === 'PGRST204' ||
       error.code === '42703' ||

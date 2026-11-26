@@ -99,6 +99,7 @@ export interface Fabric {
 
 export type TrimPurchaseUnit =
   | 'piece'
+  | 'meter'
   | 'dozen'
   | 'roll'
   | 'pack'
